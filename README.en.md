@@ -1,0 +1,223 @@
+🌐 [Português](README.md) · **English**
+
+# ESP32-S2 Mini — FM Radio (SI4703)
+
+FM radio firmware for the **Lolin S2 Mini (ESP32-S2)** with a small
+**76×284 px ST7789 LCD** used in landscape orientation (**284×76**).
+
+The project includes a full graphical interface (7 screens) with navigation
+through 4 physical buttons and control of a **SI4703** (FM + RDS) over I²C.
+Memories and the last tuned frequency/volume are **stored in NVS** (they survive
+a power-off).
+
+> There is a `#define USE_SI4703` switch at the top of [src/main.cpp](src/main.cpp):
+> `1` uses the real radio, `0` uses an in-RAM simulated model (handy for UI testing).
+
+---
+
+## Hardware
+
+- **MCU:** Lolin S2 Mini (ESP32-S2FNR2, 4 MB Flash, 2 MB PSRAM)
+- **Display:** TFT ST7789, **76×284 px** panel (offset inside the controller's 240×320 RAM)
+- **Radio:** SI4703 (FM + RDS), over I²C
+- **Input:** 4 physical buttons (below the display)
+
+---
+
+## Pinout
+
+### Display ST7789 (SPI)
+
+| Signal | GPIO |
+|--------|------|
+| MOSI   | 35   |
+| SCLK   | 36   |
+| MISO   | 40   |
+| CS     | 34   |
+| DC     | 37   |
+| RST    | 38   |
+
+> The panel is 76×284 but the controller has 240×320 RAM. The image is drawn into
+> a logical **284×76** sprite and copied to the panel window with **offset
+> `OX=82, OY=18`** and a 90° rotation (see `show()` in [src/main.cpp](src/main.cpp)).
+> Colors are inverted on this panel, hence `tft.invertDisplay(false)`.
+
+### Buttons (to GND, with `INPUT_PULLUP`)
+
+| Button | GPIO |
+|--------|------|
+| BT1    | 1    |
+| BT2    | 2    |
+| BT3    | 3    |
+| BT4    | 4    |
+
+### SI4703 — FM/RDS (I²C)
+
+| Signal     | GPIO |
+|------------|------|
+| SDA / SDIO | 8    |
+| SCL / SCLK | 9    |
+| RST        | 7    |
+
+> The SI4703 requires a specific reset sequence (SDIO held LOW during the RST
+> rising edge, to select the 2-wire I²C mode). This is done **manually** in
+> `setup()` *before* `Wire.begin()`, so the library doesn't repeat the reset and
+> grab the SDA pin again. The [`mathertel/Radio`](https://github.com/mathertel/Radio)
+> library is used (SI4703 + RDS). The module needs **pull-ups** (~4.7 kΩ) on
+> SDA/SCL — most boards already include them.
+
+### Wiring diagram
+
+```text
+                          ┌───────────────────────────┐
+                          │      Lolin S2 Mini         │
+                          │        (ESP32-S2)          │
+                          │                            │
+   ┌──────────────┐       │                            │       ┌──────────────┐
+   │  TFT ST7789  │       │                            │       │   SI4703 FM  │
+   │   76 x 284   │       │                            │       │   (I2C/RDS)  │
+   │              │       │                            │       │              │
+   │  MOSI/SDA ───┼───────┤ 35                       8 ├───────┼─ SDIO (SDA)  │
+   │  SCLK     ───┼───────┤ 36                       9 ├───────┼─ SCLK (SCL)  │
+   │  MISO     ───┼───────┤ 40                       7 ├───────┼─ RST         │
+   │  CS       ───┼───────┤ 34                         │       │  GND ── GND  │
+   │  DC       ───┼───────┤ 37                  3V3 ───┼───────┼─ VCC (3V3)   │
+   │  RST      ───┼───────┤ 38                         │       │  ANT ── wire │
+   │  VCC ── 3V3  │       │                            │       └──────────────┘
+   │  GND ── GND  │       │   1    2    3    4         │
+   │  BLK ── 3V3  │       │   │    │    │    │  3V3    │
+   └──────────────┘       └───┼────┼────┼────┼────┼───┘
+                              │    │    │    │    │
+                            [BT1][BT2][BT3][BT4]  │
+                              │    │    │    │    │
+                              └────┴────┴────┴────┘  (other terminal to GND)
+                                INPUT_PULLUP — button ties GPIO to GND
+
+   Buttons: GPIO 1/2/3/4  →  button  →  GND   (no external resistor)
+```
+
+> **Note:** the LCD uses `MOSI` (SPI data line) and the SI4703 uses `SDIO`
+> (I²C data) — they are **independent** buses, even though on the radio board the
+> pin is labelled "SDA".
+
+---
+
+## Screens
+
+1. **Splash** — animated boot banner (antenna with radio waves + equalizer).
+2. **Main** — current station/frequency:
+   - **No RDS:** centered frequency and the volume (`VOL x`) on the top right.
+   - **With RDS:** large station name, small frequency on the top right, and
+     scrolling *radiotext*. The volume shows at the top center and, when the
+     frequency is a stored memory, shows `P0X` before the frequency.
+3. **Tune** — manual frequency tuning, with configurable step (0.10 / 0.05,
+   toggled with a **long press on button 2**). Shows the RDS station name at the
+   top (when available).
+4. **Volume** — level 0–30, with mute.
+5. **Presets** — stored memories (up to 20, in pages of 4). Empty by default.
+   On open, the memory of the current frequency is already selected (if any).
+6. **Scan** — automatic search with **auto-store** (see below).
+7. **Menu** — Radio / Presets / Volume / Scan / About.
+8. **Message** — confirmations (e.g. "Station saved"), auto-dismiss after 2.5 s.
+
+The bottom bar of each screen shows the function of the 4 buttons; **the 3D
+buttons are physical** (below the display) and are not part of the drawing.
+
+---
+
+## Radio and memories
+
+- **RDS:** the station name (PS) and *radiotext* are read from the SI4703.
+  `checkRDS()` runs every loop iteration so no groups are missed. With no RDS, the
+  main screen shows just the centered frequency.
+- **Memories:** up to **20**, empty by default. Stored in **NVS** (`Preferences`,
+  namespace `fmradio`) — they survive a power-off.
+- **Scan (auto-store):** reached via **Menu → Scan**. The screen opens **idle**;
+  the search only starts when you press **button 1**. On start it **clears all
+  memories**, starts at the **band bottom** (87.5 MHz) and sweeps up with `seekUp`.
+  At each station it only stores if there is **stereo + a stable RDS name** (the
+  name must stay the same for ~1.5 s; waits up to 7 s per station). It ends when it
+  wraps around the band or reaches 20 memories.
+- **Restore on boot:** the last **frequency, volume and mute** are written to NVS
+  (with a 2 s deferred write to spare the flash) and restored at startup.
+
+---
+
+## Navigation
+
+**Global shortcuts (long press ≈ 700 ms):**
+
+| Button (long) | Action            |
+|---------------|-------------------|
+| 1             | → Tune            |
+| 4             | → Menu            |
+
+**Short presses per screen:**
+
+| Screen  | 1            | 2        | 3            | 4            |
+|---------|--------------|----------|--------------|--------------|
+| Main    | freq −       | freq +   | → Volume     | → Presets    |
+| Volume  | vol −        | vol +    | Mute         | OK → Main    |
+| Tune    | freq −       | freq +   | Save memory  | Exit         |
+| Presets | previous     | next     | OK (tune)    | Exit         |
+| Scan    | Start / Stop | —        | —            | Exit         |
+| Menu    | ◄            | ►        | OK (enter)   | Exit         |
+| Message | dismiss      | —        | —            | —            |
+
+> In **Tune**, the step (0.10 / 0.05) is toggled with a **long press on button 2**.
+
+**Inactivity timeout:** on any screen other than Main, after **30 s** with no
+interaction it returns to Main (except while scanning).
+
+---
+
+## Testing over Serial
+
+To test navigation without pressing the physical buttons, use the **Serial
+Monitor** (115200 baud):
+
+| Key             | Equivalent                  |
+|-----------------|-----------------------------|
+| `1` `2` `3` `4` | short press of buttons 1–4  |
+| `q` `w` `e` `r` | long press of buttons 1–4   |
+
+---
+
+## Build & Upload (PlatformIO)
+
+```bash
+pio run            # build
+pio run -t upload  # flash (COM port set in platformio.ini)
+pio device monitor # serial console
+```
+
+Relevant configuration in [platformio.ini](platformio.ini):
+
+- `board = lolin_s2_mini`, `framework = arduino`
+- `ARDUINO_USB_CDC_ON_BOOT=1` (Serial over native USB CDC)
+- TFT_eSPI configured via `build_flags` (ST7789 driver, pins, fonts, RGB BGR)
+- Loaded fonts: GLCD, 2, 4, 6, 7, GFXFF (FreeSans used for the *radiotext*)
+
+---
+
+## Structure
+
+```text
+ESP32S2Mini_FMRadio/
+├── platformio.ini      # board + TFT_eSPI configuration (build_flags)
+├── src/
+│   └── main.cpp        # UI, state machine, SI4703 and persistence (NVS)
+├── README.md           # Portuguese
+└── README.en.md        # English
+```
+
+---
+
+## Next steps
+
+- [x] Wire the SI4703 and enable the real calls.
+- [x] Read real RDS (station name + radiotext) from the SI4703.
+- [x] Persist memories and last frequency/volume in NVS (flash).
+- [ ] Validate the 4 physical buttons on the final hardware.
+- [ ] Individual edit/remove of memories.
+- [ ] Battery level indicator (if applicable).
