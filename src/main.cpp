@@ -247,19 +247,24 @@ static void drawSignal(int x, int y, int level) {
 static void drawFooter(const char* a, const char* b, const char* c, const char* d) {
   fontNumbered();                      // medicoes/textos do rodape sao fonte 1
   const char* lbl[4] = {a, b, c, d};
-  cv.drawFastHLine(0, 61, LW, COL_FRAME);
+  const uint16_t BTN = 0x05B6;         // teal: cor do "botao" (chip) das acoes
+  cv.setTextFont(1);
+  cv.setTextDatum(TL_DATUM);
   int cw = LW / 4;
   for (int i = 0; i < 4; i++) {
     int x0 = i * cw;
-    if (i > 0) cv.drawFastVLine(x0, 62, 14, COL_FRAME);
+    int bx = x0 + 3, bw = cw - 6, by = 62, bh = 12;
+    cv.fillSmoothRoundRect(bx, by, bw, bh, 3, BTN, COL_BG);  // chip como o preset
+
     String s = lbl[i];
-    cv.setTextFont(1);
-    int w = cv.textWidth(s);
-    int sx = x0 + (cw - w) / 2;
     char num[2] = {s[0], 0};
-    txt(num, sx, 66, COL_CYAN, 1);
-    int nw = cv.textWidth(num);
-    txt(s.substring(1).c_str(), sx + nw, 66, COL_GREY, 1);
+    String rest = s.substring(1);                  // inclui o espaco inicial
+    int nw = cv.textWidth(num), rw = cv.textWidth(rest);
+    int sx = bx + (bw - (nw + rw)) / 2;
+    cv.setTextColor(0xFFE0, BTN);                  // numero a amarelo (bom contraste no teal)
+    cv.drawString(num, sx, by + 3);
+    cv.setTextColor(COL_WHITE, BTN);               // etiqueta a branco
+    cv.drawString(rest.c_str(), sx + nw, by + 3);
   }
 }
 
@@ -351,6 +356,12 @@ static void icInfo(int cx, int cy, uint16_t c) {
   cv.fillSmoothCircle(cx, cy - 4, 1.6, c, COL_BG);
   cv.fillRect(cx - 1, cy - 1, 2, 7, c);
 }
+// pequeno icone "broadcast": ponto central + ondas dos dois lados
+static void icBroadcast(int cx, int cy, uint16_t c) {
+  cv.fillSmoothCircle(cx, cy, 2, c, COL_BG);
+  cv.drawSmoothArc(cx, cy, 5, 4, 235, 305, c, COL_BG, true);   // onda direita
+  cv.drawSmoothArc(cx, cy, 5, 4,  55, 125, c, COL_BG, true);   // onda esquerda
+}
 
 // ===================== ECRAS ===============================
 static void screenSplash(int f) {
@@ -373,33 +384,46 @@ static void screenSplash(int f) {
   }
 }
 
+// Design "cartao de estacao"
 static void screenMain() {
   drawFrame();
-  txt("FM", 8, 4, COL_CYAN, 1);
-  txt(st.stereo ? "STEREO" : "MONO", 30, 4, st.stereo ? COL_GREEN : COL_GREY, 1);
-  drawSignal(80, 4, st.rssi);
 
+  // ---- barra de estado (topo) ----
+  icBroadcast(11, 7, st.stereo ? COL_GREEN : COL_GREY);
+  txt(st.stereo ? "STEREO" : "MONO", 20, 4, st.stereo ? COL_GREEN : COL_GREY, 1);
+
+  // volume ao centro do topo (comum aos dois modos)
+  String vol = st.muted ? String("MUTE") : ("VOL " + String(st.volume));
+  txt(vol.c_str(), LW / 2, 4, st.muted ? COL_ORANGE : COL_CYAN, 1, TC_DATUM);
+
+  int rx = LW - 10;
   int pIdx = currentPreset();
-  // info no topo direito: [P0X] + frequencia/volume
-  String right = st.hasRDS ? (f2(st.freq) + " MHz") : ("VOL " + String(st.volume));
-  txt(right.c_str(), LW - 10, 4, COL_CYAN, 1, TR_DATUM);
-  if (pIdx >= 0) {
+  if (pIdx >= 0) {                         // chip da memoria (canto direito)
     char pn[5]; snprintf(pn, sizeof(pn), "P%02d", pIdx + 1);
-    int rw = cv.textWidth(right.c_str(), 1);
-    txt(pn, LW - 10 - rw - 6, 4, COL_ORANGE, 1, TR_DATUM);
+    int w = 24, h = 11, x = rx - w, y = 1;
+    cv.fillSmoothRoundRect(x, y, w, h, 3, COL_ORANGE, COL_BG);
+    cv.setTextFont(1);
+    cv.setTextDatum(TC_DATUM);
+    cv.setTextColor(COL_BG, COL_ORANGE);   // texto preto com fundo laranja (chip)
+    cv.drawString(pn, x + w / 2, y + 2);
+    rx = x - 6;
   }
-  // com RDS, a direita mostra a frequencia -> mostra o volume ao centro do topo
+  drawSignal(rx - 15, 4, st.rssi);
+
   if (st.hasRDS) {
-    String vol = st.muted ? String("MUTE") : ("VOL " + String(st.volume));
-    txt(vol.c_str(), 120, 4, st.muted ? COL_ORANGE : COL_CYAN, 1);
+    // ---- cartao: barra de acento + nome + frequencia ----
+    cv.fillSmoothRoundRect(8, 16, 3, 26, 1, COL_CYAN, COL_BG);
+    stxt(st.station.c_str(), 16, 29, COL_WHITE, FF_BIG, ML_DATUM);
+    txt((f2(st.freq) + " MHz").c_str(), LW - 12, 29, COL_CYAN, 2, MR_DATUM);
+    // separador + ticker do radiotext (altura >= 16 para nao cortar a fonte)
+    cv.drawFastHLine(8, 44, LW - 16, COL_FRAME);
+    scrollText(st.radiotext.c_str(), 12, 45, LW - 24, 16, 0xC618);  // prata claro (mais visivel que grey)
+  } else {
+    // ---- sem RDS: frequencia grande + dial da banda ----
+    drawBigFreq(f2(st.freq).c_str(), COL_WHITE, 30);
+    drawScale(52, FM_MIN, FM_MAX, st.freq, true);
   }
 
-  if (!st.hasRDS) {
-    drawBigFreq(f2(st.freq).c_str(), COL_WHITE, 36);
-  } else {
-    stxt(st.station.c_str(), LW / 2, 29, COL_WHITE, FF_BIG, MC_DATUM);
-    scrollText(st.radiotext.c_str(), 12, 43, LW - 24, 18, COL_WHITE);
-  }
   drawFooter("1 -", "2 +", "3 VOL", "4 PRESET");
 }
 
