@@ -22,6 +22,12 @@
 #include <SI4703.h>
 #include <RDSParser.h>
 
+// fontes smooth (anti-aliased VLW, embebidas em FLASH) - contornos suavizados
+#include "NotoSansBold15.h"
+#include "Latin_Hiragana_24.h"
+#define FF_BIG   (Latin_Hiragana_24)   // frequencia / nome estacao / volume (24px)
+#define FF_TITLE (NotoSansBold15)      // titulos dos ecras (15px, bold)
+
 // 1 = usa o SI4703 real ; 0 = modelo simulado em RAM
 #define USE_SI4703 1
 
@@ -212,11 +218,38 @@ static void applyFreq() {
 }
 
 // =================== HELPERS DE DESENHO ====================
+// --- gestao da fonte smooth ativa ---
+// Uma fonte smooth carregada SOBREPOE-SE as fontes numeradas (mesmo passando o
+// numero da fonte ao drawString/textWidth). Por isso descarregamo-la sempre
+// antes de desenhar/medir texto com fontes numeradas.
+static const uint8_t* gFont = nullptr;
+static void fontNumbered() {
+  if (gFont) { cv.unloadFont(); gFont = nullptr; }
+}
+static void fontSmooth(const uint8_t* f) {
+  if (gFont != f) {
+    if (gFont) cv.unloadFont();
+    cv.loadFont(f);
+    gFont = f;
+  }
+}
+
 static void txt(const char* s, int x, int y, uint16_t c, uint8_t font,
                 uint8_t datum = TL_DATUM) {
+  fontNumbered();
   cv.setTextDatum(datum);
   cv.setTextColor(c, COL_BG);
   cv.drawString(s, x, y, font);
+}
+
+// texto com fonte smooth (anti-aliased). O AA mistura com o fundo COL_BG, que e
+// limpo a cada frame (fillSprite), por isso nao deixa rasto.
+static void stxt(const char* s, int x, int y, uint16_t c, const uint8_t* f,
+                 uint8_t datum = TL_DATUM) {
+  fontSmooth(f);
+  cv.setTextDatum(datum);
+  cv.setTextColor(c, COL_BG);
+  cv.drawString(s, x, y);
 }
 
 static void drawSignal(int x, int y, int level) {
@@ -227,6 +260,7 @@ static void drawSignal(int x, int y, int level) {
 }
 
 static void drawFooter(const char* a, const char* b, const char* c, const char* d) {
+  fontNumbered();                      // medicoes/textos do rodape sao fonte 1
   const char* lbl[4] = {a, b, c, d};
   cv.drawFastHLine(0, 61, LW, COL_FRAME);
   int cw = LW / 4;
@@ -262,15 +296,18 @@ static void drawScale(int y, float fMin, float fMax, float fCur, bool ticks) {
 }
 
 static void drawBigFreq(const char* num, uint16_t col, int yc) {
-  int fw = cv.textWidth(num, 4);
+  fontSmooth(FF_BIG);
+  int fw = cv.textWidth(num);
+  fontNumbered();
   int mw = cv.textWidth("MHz", 2);
-  int x = (LW - (fw + 5 + mw)) / 2;
-  txt(num, x, yc, col, 4, ML_DATUM);
-  txt("MHz", x + fw + 5, yc + 1, COL_GREY, 2, ML_DATUM);
+  int x = (LW - (fw + 6 + mw)) / 2;
+  stxt(num, x, yc, col, FF_BIG, ML_DATUM);
+  txt("MHz", x + fw + 6, yc + 1, COL_GREY, 2, ML_DATUM);
 }
 
 static void scrollText(const char* s, int x, int y, int w, int h, uint16_t col) {
   const uint8_t FNT = 2;               // fonte 2 (16px) - um pouco menor que FreeSans
+  fontNumbered();                      // garante fonte numerada (nao a smooth)
   cv.setViewport(x, y, w, h, true);
   cv.setTextColor(col, COL_BG);
   int tw = cv.textWidth(s, FNT);
@@ -341,7 +378,7 @@ static void screenSplash(int f) {
     int r = 7 + ((f * 2 + i * 9) % 27);
     cv.drawSmoothArc(ax, ay - 6, r, r - 1, 235, 305, (r < 20) ? COL_CYAN : COL_FRAME, COL_BG, true);
   }
-  txt("FM RADIO", 178, 23, COL_CYAN, 4, MC_DATUM);
+  stxt("FM RADIO", 178, 22, COL_CYAN, FF_BIG, MC_DATUM);
   cv.fillRect(120, 38, 116, 2, COL_ORANGE);
   txt("Sintonizador Estereo", 178, 43, COL_GREY, 1, TC_DATUM);
   int bx = 74, by = 67, bw = 4, gap = 2;
@@ -375,7 +412,7 @@ static void screenMain() {
   if (!st.hasRDS) {
     drawBigFreq(f2(st.freq).c_str(), COL_WHITE, 36);
   } else {
-    txt(st.station.c_str(), LW / 2, 29, COL_WHITE, 4, MC_DATUM);
+    stxt(st.station.c_str(), LW / 2, 29, COL_WHITE, FF_BIG, MC_DATUM);
     scrollText(st.radiotext.c_str(), 12, 43, LW - 24, 18, COL_WHITE);
   }
   drawFooter("1 -", "2 +", "3 VOL", "4 PRESET");
@@ -384,12 +421,12 @@ static void screenMain() {
 static void screenVolume() {
   drawFrame();
   icSpeaker(20, 11, st.muted ? COL_GREY : COL_CYAN);
-  txt("VOLUME", LW / 2, 4, COL_CYAN, 2, TC_DATUM);
+  stxt("VOLUME", LW / 2, 3, COL_CYAN, FF_TITLE, TC_DATUM);
   txt(st.stereo ? "STEREO" : "MONO", LW - 10, 4, st.stereo ? COL_GREEN : COL_GREY, 1, TR_DATUM);
   if (st.muted) txt("MUTE", 10, 4, COL_ORANGE, 1);
 
   char vb[4]; snprintf(vb, sizeof(vb), "%d", st.volume);
-  txt(st.muted ? "--" : vb, LW / 2, 33, st.muted ? COL_GREY : COL_WHITE, 4, MC_DATUM);
+  stxt(st.muted ? "--" : vb, LW / 2, 33, st.muted ? COL_GREY : COL_WHITE, FF_BIG, MC_DATUM);
 
   int x0 = 24, x1 = LW - 24, y = 50, n = 30;
   int seg = (x1 - x0) / n;
@@ -412,7 +449,7 @@ static void presetBox(int x, int idx, bool sel) {
 }
 static void screenPresets() {
   drawFrame();
-  txt("PRESETS", LW / 2, 3, COL_CYAN, 2, TC_DATUM);
+  stxt("PRESETS", LW / 2, 3, COL_CYAN, FF_TITLE, TC_DATUM);
 
   if (nPresets == 0) {
     txt("Sem memorias guardadas", LW / 2, 30, COL_GREY, 2, MC_DATUM);
