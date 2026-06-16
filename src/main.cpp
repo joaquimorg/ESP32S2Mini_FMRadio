@@ -320,25 +320,25 @@ static void triLeft(int x, int y, int s, uint16_t c)  { cv.fillTriangle(x, y, x 
 static void triRight(int x, int y, int s, uint16_t c) { cv.fillTriangle(x, y, x - s, y - s, x - s, y + s, c); }
 
 // ================= ICONES (anti-aliased) ===================
+// estilo Lucide/Feather: traco ~2px, cantos arredondados, aneis anti-aliased
 static void icRadio(int cx, int cy, uint16_t c) {
-  cv.drawWideLine(cx - 7, cy - 5, cx + 1, cy - 11, 1.5, c, COL_BG);
-  cv.drawSmoothRoundRect(cx - 11, cy - 6, 3, 2, 22, 14, c, COL_BG);
-  cv.fillSmoothCircle(cx + 4, cy + 1, 4, c, COL_BG);
-  cv.fillSmoothCircle(cx + 4, cy + 1, 2, COL_BG, c);
-  cv.fillRect(cx - 7, cy - 2, 5, 2, c);
-  cv.fillRect(cx - 7, cy + 2, 5, 2, c);
+  // antena diagonal com ponta
+  cv.drawWedgeLine(cx + 1, cy - 5, cx + 8, cy - 12, 1.4, 1.4, c, COL_BG);
+  cv.fillSmoothCircle(cx + 8, cy - 12, 1, c, COL_BG);
+  // corpo (caixa arredondada)
+  cv.drawSmoothRoundRect(cx - 11, cy - 5, 3, 2, 22, 13, c, COL_BG);
+  // botao/dial
+  cv.fillSmoothCircle(cx + 5, cy + 2, 3, c, COL_BG);
+  cv.fillSmoothCircle(cx + 5, cy + 2, 1, COL_BG, c);
+  // grelha (2 barras arredondadas)
+  cv.fillSmoothRoundRect(cx - 8, cy - 1, 8, 2, 1, c, COL_BG);
+  cv.fillSmoothRoundRect(cx - 8, cy + 3, 6, 2, 1, c, COL_BG);
 }
 static void icStar(int cx, int cy, uint16_t c) {
-  const float R = 10, r = 4.0;
-  float xs[10], ys[10];
-  for (int i = 0; i < 10; i++) {
-    float a = -1.5708f + i * 0.62832f;
-    float rad = (i % 2 == 0) ? R : r;
-    xs[i] = cx + cos(a) * rad;
-    ys[i] = cy + sin(a) * rad;
-  }
-  for (int i = 0; i < 10; i++)
-    cv.fillTriangle(cx, cy, xs[i], ys[i], xs[(i + 1) % 10], ys[(i + 1) % 10], c);
+  // marcador (bookmark) preenchido com entalhe em V em baixo
+  int w = 13, h = 19, x = cx - w / 2, y = cy - h / 2;
+  cv.fillSmoothRoundRect(x, y, w, h, 2, c, COL_BG);
+  cv.fillTriangle(x - 1, y + h, x + w + 1, y + h, cx, y + h - 7, COL_BG);
 }
 static void icSpeaker(int cx, int cy, uint16_t c) {
   cv.fillRect(cx - 9, cy - 3, 5, 6, c);
