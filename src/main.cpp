@@ -163,10 +163,11 @@ static void rdsServiceName(const char* name) {
   if (st.station.length()) st.hasRDS = true;
 }
 // A RDSParser so envia o radiotext quando a mensagem esta completa (o indice
-// volta ao inicio), por isso basta mostra-lo diretamente.
+// volta ao inicio), por isso basta mostra-lo diretamente. Ignoramos texto vazio
+// (erros de descodificacao / reset) para nao apagar um texto valido anterior.
 static void rdsTextCb(const char* text) {
-  st.radiotext = text;
-  st.radiotext.trim();
+  String t = text; t.trim();
+  if (t.length()) st.radiotext = t;
 }
 static void rdsProcess(uint16_t b1, uint16_t b2, uint16_t b3, uint16_t b4) {
   rds.processData(b1, b2, b3, b4);
