@@ -167,7 +167,14 @@ static void rdsServiceName(const char* name) {
 // (erros de descodificacao / reset) para nao apagar um texto valido anterior.
 static void rdsTextCb(const char* text) {
   String t = text; t.trim();
-  if (t.length()) st.radiotext = t;
+  if (!t.length()) return;
+  // Se o novo texto e mais curto que o atual e comeca pelas mesmas 4 letras, e
+  // provavelmente uma repeticao incompleta da mesma mensagem -> mantem o atual.
+  if (t.length() < st.radiotext.length() && t.length() >= 4 &&
+      t.substring(0, 4) == st.radiotext.substring(0, 4)) {
+    return;
+  }
+  st.radiotext = t;
 }
 static void rdsProcess(uint16_t b1, uint16_t b2, uint16_t b3, uint16_t b4) {
   rds.processData(b1, b2, b3, b4);
