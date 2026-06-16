@@ -162,33 +162,11 @@ static void rdsServiceName(const char* name) {
   st.station.trim();
   if (st.station.length()) st.hasRDS = true;
 }
-// O radiotext chega em segmentos; so o mostramos quando estabiliza (deixa de
-// mudar durante RT_STABLE_MS). Ate la mantem-se o texto anterior.
-static String   gRtCand;                       // candidato a estabilizar
-static uint32_t gRtSince = 0;
-static const uint32_t RT_STABLE_MS = 1500;
-// Quanto tempo um fragmento "parcial" tem de persistir antes de aceitarmos que
-// a estacao mudou mesmo o texto para algo mais curto (evita substituir um
-// texto completo por um pedaco recebido durante a retransmissao).
-static const uint32_t RT_REPLACE_MS = 8000;
-
+// A RDSParser so envia o radiotext quando a mensagem esta completa (o indice
+// volta ao inicio), por isso basta mostra-lo diretamente.
 static void rdsTextCb(const char* text) {
-  String t = text; t.trim();
-  if (t != gRtCand) { gRtCand = t; gRtSince = millis(); }
-}
-static void updateRadiotext() {
-  if (!gRtCand.length() || gRtCand == st.radiotext) return;
-  if (millis() - gRtSince <= RT_STABLE_MS) return;   // ainda a mudar -> espera
-
-  // Se o candidato e apenas um pedaco do que ja mostramos (mesma mensagem a ser
-  // remontada, segmentos a chegar em falta), mantemos o texto completo atual.
-  // So aceitamos a "regressao" se o pedaco persistir muito tempo, sinal de que
-  // a estacao trocou mesmo de mensagem.
-  if (st.radiotext.length() && st.radiotext.indexOf(gRtCand) >= 0 &&
-      millis() - gRtSince < RT_REPLACE_MS) {
-    return;
-  }
-  st.radiotext = gRtCand;                            // so atualiza quando completo
+  st.radiotext = text;
+  st.radiotext.trim();
 }
 static void rdsProcess(uint16_t b1, uint16_t b2, uint16_t b3, uint16_t b4) {
   rds.processData(b1, b2, b3, b4);
@@ -206,7 +184,6 @@ static void applyFreq() {
   radio.setFrequency((uint16_t)lroundf(st.freq * 100));   // unidades de 10 kHz
   st.station = "";
   st.radiotext = "";
-  gRtCand = "";
   st.hasRDS = false;
   rds.init();
 #else
@@ -838,7 +815,7 @@ void loop() {
 
 #if USE_SI4703
   // RDS: ler em TODAS as iteracoes para nao perder grupos (chegam ~a cada 87ms)
-  if (!st.scanning) { radio.checkRDS(); updateRadiotext(); }
+  if (!st.scanning) radio.checkRDS();
   // RSSI/estereo nao precisam de ser tao frequentes
   static uint32_t tInfo = 0;
   if (millis() - tInfo > 300) {
