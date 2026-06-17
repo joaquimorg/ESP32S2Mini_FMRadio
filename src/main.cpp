@@ -20,7 +20,7 @@
 #include <Preferences.h>
 #include <radio.h>
 #include <SI4703.h>
-#include <RDSParser.h>
+#include "RDSParserLocal.h"   // copia local (descodificacao de RadioText melhorada)
 
 // fontes smooth (anti-aliased VLW, embebidas em FLASH) - contornos suavizados
 #include "NotoSansBold15.h"
@@ -35,7 +35,7 @@
 static const uint8_t PIN_SDA = 8, PIN_SCL = 9, PIN_RST = 7;
 
 SI4703 radio;
-RDSParser rds;
+RDSParserLocal rds;
 
 TFT_eSPI tft = TFT_eSPI();
 
@@ -162,23 +162,73 @@ static void rdsServiceName(const char* name) {
   st.station.trim();
   if (st.station.length()) st.hasRDS = true;
 }
-// A RDSParser so envia o radiotext quando a mensagem esta completa (o indice
-// volta ao inicio), por isso basta mostra-lo diretamente. Ignoramos texto vazio
-// (erros de descodificacao / reset) para nao apagar um texto valido anterior.
+// A RDSParserLocal so chama este callback quando a mensagem de radiotext esta
+// COMPLETA (ver RDSParserLocal.cpp), por isso basta sanitizar e mostrar.
+// Sanitizamos caracteres nao-imprimiveis (-> espaco) e ignoramos texto vazio.
 static void rdsTextCb(const char* text) {
-  String t = text; t.trim();
-  if (!t.length()) return;
-  // Se o novo texto e mais curto que o atual e comeca pelas mesmas 4 letras, e
-  // provavelmente uma repeticao incompleta da mesma mensagem -> mantem o atual.
-  if (t.length() < st.radiotext.length() && t.length() >= 4 &&
-      t.substring(0, 4) == st.radiotext.substring(0, 4)) {
-    return;
+  String t;
+  for (const char* p = text; *p && (p - text) < 64; ++p) {
+    t += (*p >= 0x20 && *p < 0x7F) ? *p : ' ';
   }
-  st.radiotext = t;
+  t.trim();
+  if (!t.length()) return;                          // ignora vazio (reset/erros)
+  if (t != st.radiotext) st.radiotext = t;
 }
 static void rdsProcess(uint16_t b1, uint16_t b2, uint16_t b3, uint16_t b4) {
   rds.processData(b1, b2, b3, b4);
 }
+
+#if USE_SI4703
+// Leitura direta do RDS no SI4703 (registos 0x0A..0x0F), em vez de radio.checkRDS().
+//
+// Porque: o checkRDS() da biblioteca so entrega o grupo se TODOS os 4 blocos
+// forem corrigiveis. No RadioText os caracteres estao nos blocos C e D e o
+// indice no bloco B; o bloco A (codigo PI) NAO e preciso. Bastava um erro
+// irrecuperavel no bloco A para descartar o grupo inteiro e perder texto bom,
+// fazendo a mensagem nunca completar. Aqui ignoramos erros do bloco A.
+//
+// Bonus: RSSI/estereo saem do mesmo registo 0x0A, evitando uma leitura extra
+// (getRadioInfo) que limpava o flag RDSR e tambem fazia perder grupos.
+static const uint8_t SI4703_ADDR = 0x10;
+static uint32_t      lastRdsPoll = 0;
+
+static void pollSI4703RDS() {
+  uint32_t now = millis();
+  if (now - lastRdsPoll < 35) return;          // grupos chegam ~a cada 87ms
+  lastRdsPoll = now;
+
+  // le 0x0A..0x0F (status + RDS) numa so transacao (6 registos = 12 bytes)
+  if (Wire.requestFrom((int)SI4703_ADDR, 12) != 12) return;
+  uint16_t reg[6];
+  for (int i = 0; i < 6; i++) {
+    uint8_t hi = Wire.read();
+    uint8_t lo = Wire.read();
+    reg[i] = ((uint16_t)hi << 8) | lo;
+  }
+  uint16_t statusRssi = reg[0];                // 0x0A
+  uint16_t readChan   = reg[1];                // 0x0B
+
+  // RSSI (bits 7:0) e indicador de estereo (bit 8) direto do chip
+  st.rssi   = constrain((int)map(statusRssi & 0x00FF, 0, 70, 0, 5), 0, 5);
+  st.stereo = (statusRssi & 0x0100) != 0;
+
+  if (!(statusRssi & 0x8000)) return;          // RDSR: sem grupo novo pronto
+
+  // indicadores de erro por bloco (0=ok, 1/2=corrigido, 3=irrecuperavel)
+  uint8_t blerA = (statusRssi >> 9) & 3;
+  uint8_t blerB = (readChan   >> 14) & 3;
+  uint8_t blerC = (readChan   >> 12) & 3;
+  uint8_t blerD = (readChan   >> 10) & 3;
+
+  // Para o texto precisamos de B, C e D fiaveis; o bloco A nao importa.
+  if (blerB == 3 || blerC == 3 || blerD == 3) return;
+
+  // Se o bloco A vier irrecuperavel, passamos 0xFFFF (nao-zero) para o parser
+  // nao o confundir com o sinal de reset (block1 == 0).
+  uint16_t blockA = (blerA == 3) ? 0xFFFF : reg[2];
+  rds.processData(blockA, reg[3], reg[4], reg[5]);   // RDSA, RDSB, RDSC, RDSD
+}
+#endif
 
 static void applyVolume() {
 #if USE_SI4703
@@ -846,17 +896,8 @@ void loop() {
   updateScan();
 
 #if USE_SI4703
-  // RDS: ler em TODAS as iteracoes para nao perder grupos (chegam ~a cada 87ms)
-  if (!st.scanning) radio.checkRDS();
-  // RSSI/estereo nao precisam de ser tao frequentes
-  static uint32_t tInfo = 0;
-  if (millis() - tInfo > 300) {
-    tInfo = millis();
-    RADIO_INFO info;
-    radio.getRadioInfo(&info);
-    st.rssi = constrain((int)map(info.rssi, 0, 70, 0, 5), 0, 5);
-    st.stereo = info.stereo;
-  }
+  // RDS + RSSI/estereo lidos diretamente do chip (ver pollSI4703RDS).
+  if (!st.scanning) pollSI4703RDS();
 #endif
 
   if (st.screen == SC_MSG && millis() > st.msgUntil) st.screen = st.msgReturn;
