@@ -159,6 +159,46 @@ reads **GPIO6** (ADC1) and multiplies by 2.
 
 ---
 
+## 3D case (printing)
+
+Case modeled in **OpenSCAD**, in two parts (body + faceplate), designed to
+**print without supports**. The faceplate has the LCD cutout, two speaker grilles
+with vertical slots, the slot for the membrane keypad's flex cable, and an engraved
+"FM RADIO" label. It closes with **4 posts** and **M3** screws from the back.
+
+| Front view | Isometric view |
+|:----------:|:--------------:|
+| <img src="docs/preview_face.png" width="280"> | <img src="docs/preview_iso.png" width="280"> |
+
+- **Outer dimensions:** ≈ **163 × 93 × 37 mm** (W × H × D).
+- **Walls / floor / faceplate:** 2.4 / 2.4 / 3.0 mm; rounded corners and 45° chamfered edges.
+- **Side openings:** USB-C and antenna jack.
+
+### Files ([docs/](docs/))
+
+| File | Contents |
+|------|----------|
+| [docs/fmradio_case.scad](docs/fmradio_case.scad) | Parametric source (OpenSCAD). |
+| [docs/body.stl](docs/body.stl) | Body, ready to slice. |
+| [docs/faceplate.stl](docs/faceplate.stl) | Faceplate, ready to slice. |
+
+### Print orientation
+
+- **faceplate:** outer (smooth) face **down**; posts point up.
+- **body:** opening **up**.
+
+### Regenerate the STLs from the `.scad`
+
+```bash
+openscad -D 'part="body"'      -o docs/body.stl      docs/fmradio_case.scad
+openscad -D 'part="faceplate"' -o docs/faceplate.stl docs/fmradio_case.scad
+```
+
+> The parameters (walls, LCD/speaker cutouts, posts, etc.) live at the top of
+> [docs/fmradio_case.scad](docs/fmradio_case.scad) and can be adjusted.
+
+---
+
 ## Screens
 
 1. **Splash** — animated boot banner (antenna with radio waves + equalizer).
@@ -266,6 +306,7 @@ ESP32S2Mini_FMRadio/
 ├── platformio.ini      # board + TFT_eSPI configuration (build_flags)
 ├── src/
 │   └── main.cpp        # UI, state machine, SI4703 and persistence (NVS)
+├── docs/               # hardware images + 3D case (.scad / .stl)
 ├── README.md           # Portuguese
 └── README.en.md        # English
 ```

@@ -160,6 +160,48 @@ O firmware lê em **GPIO6** (ADC1) e multiplica por 2.
 
 ---
 
+## Caixa 3D (impressão)
+
+Caixa modelada em **OpenSCAD**, em duas peças (corpo + frente), pensada para
+**imprimir sem suportes**. A frente tem o recorte do LCD, duas grelhas de
+altifalante em ranhuras verticais, a fenda para a fita do teclado de membrana e a
+etiqueta "FM RADIO" gravada. O fecho é por **4 postes** com parafusos **M3** pela
+traseira.
+
+| Vista frontal | Vista isométrica |
+|:-------------:|:----------------:|
+| <img src="docs/preview_face.png" width="280"> | <img src="docs/preview_iso.png" width="280"> |
+
+- **Dimensões exteriores:** ≈ **163 × 93 × 37 mm** (L × A × P).
+- **Paredes / base / frente:** 2.4 / 2.4 / 3.0 mm; cantos arredondados e bordos
+  chanfrados a 45°.
+- **Aberturas laterais:** USB-C e jack de antena.
+
+### Ficheiros ([docs/](docs/))
+
+| Ficheiro | Conteúdo |
+|----------|----------|
+| [docs/fmradio_case.scad](docs/fmradio_case.scad) | Fonte paramétrica (OpenSCAD). |
+| [docs/body.stl](docs/body.stl) | Corpo, pronto a fatiar. |
+| [docs/faceplate.stl](docs/faceplate.stl) | Frente, pronta a fatiar. |
+
+### Orientação de impressão
+
+- **faceplate:** face exterior (lisa) **para baixo**; os postes apontam para cima.
+- **body:** abertura **para cima**.
+
+### Regerar os STL a partir do `.scad`
+
+```bash
+openscad -D 'part="body"'      -o docs/body.stl      docs/fmradio_case.scad
+openscad -D 'part="faceplate"' -o docs/faceplate.stl docs/fmradio_case.scad
+```
+
+> Os parâmetros (paredes, recortes do LCD/altifalantes, postes, etc.) estão no topo
+> de [docs/fmradio_case.scad](docs/fmradio_case.scad) e podem ser ajustados.
+
+---
+
 ## Ecrãs
 
 1. **Splash** — banner animado de arranque (antena com ondas de rádio + equalizador).
@@ -267,6 +309,7 @@ ESP32S2Mini_FMRadio/
 ├── platformio.ini      # configuração da board + TFT_eSPI (build_flags)
 ├── src/
 │   └── main.cpp        # UI, máquina de estados, SI4703 e persistência (NVS)
+├── docs/               # imagens do hardware + caixa 3D (.scad / .stl)
 ├── README.md           # Português
 └── README.en.md        # Inglês
 ```
