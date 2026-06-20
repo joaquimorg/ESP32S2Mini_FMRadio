@@ -20,6 +20,18 @@ O projeto inclui uma interface gráfica completa (7 ecrãs) com navegação por
 - **Display:** TFT ST7789, painel de **76×284 px** (offset dentro da RAM 240×320 do controlador)
 - **Rádio:** SI4703 (FM + RDS), via I²C
 - **Entrada:** 4 botões físicos (por baixo do display)
+- **Áudio:** amplificador PAM8403 (2×3 W) + altifalante 8 Ω / 3 W
+
+### Componentes
+
+| Componente | Imagem | Descrição |
+|------------|:------:|-----------|
+| **Lolin S2 Mini** | <img src="docs/esp32_s2_mini.webp" width="160"> | MCU ESP32-S2 (35×25 mm), 4 MB Flash + 2 MB PSRAM, USB-C nativo. |
+| **Display ST7789** | <img src="docs/lcd_display_76x284.webp" width="160"> | TFT 2.25" a cores, 76×284 px, interface SPI de 4 fios, alimentação 2.8–3.3 V. |
+| **SI4703** | <img src="docs/SI4703.webp" width="160"> | Recetor FM com RDS por I²C; jack de 3.5 mm que serve também de antena. |
+| **Teclado 1×4** | <img src="docs/keyboard_1x4.webp" width="160"> | Membrana com 4 botões (BT1–BT4) usada para a navegação. |
+| **Amplificador PAM8403** | <img src="docs/pam8403_amp_2x3W.webp" width="160"> | Amplificador classe-D estéreo 2×3 W, alimentação 2.5–5.5 V. |
+| **Altifalante** | <img src="docs/speaker.webp" width="160"> | Altifalante retangular 8 Ω / 3 W (70×30 mm) para a saída de áudio. |
 
 ---
 
