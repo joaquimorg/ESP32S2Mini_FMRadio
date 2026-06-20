@@ -53,14 +53,19 @@ O projeto inclui uma interface gráfica completa (7 ecrãs) com navegação por
 > `OX=82, OY=18`** e rotação de 90° (ver `show()` em [src/main.cpp](src/main.cpp)).
 > As cores estão invertidas no painel, por isso é usado `tft.invertDisplay(false)`.
 
-### Botões (a GND, com `INPUT_PULLUP`)
+### Teclado de membrana 1×4
 
-| Botão | GPIO |
-|-------|------|
-| BT1   | 1    |
-| BT2   | 2    |
-| BT3   | 3    |
-| BT4   | 4    |
+Tira única com **5 pinos**: uma linha **comum (COM)** mais as 4 teclas. Cada tecla
+liga a sua linha ao COM. O COM é mantido a **LOW** por um GPIO e cada tecla é lida
+com `INPUT_PULLUP` (premir → pino a LOW). Em alternativa, o COM pode ir direto a **GND**.
+
+| Sinal     | GPIO |
+|-----------|------|
+| COM (LOW) | 5    |
+| Tecla 1   | 1    |
+| Tecla 2   | 2    |
+| Tecla 3   | 3    |
+| Tecla 4   | 4    |
 
 ### SI4703 — FM/RDS (I²C)
 
@@ -95,20 +100,63 @@ O projeto inclui uma interface gráfica completa (7 ecrãs) com navegação por
    │  DC       ───┼───────┤ 37                  3V3 ───┼───────┼─ VCC (3V3)   │
    │  RST      ───┼───────┤ 38                         │       │  ANT ── fio  │
    │  VCC ── 3V3  │       │                            │       └──────────────┘
-   │  GND ── GND  │       │   1    2    3    4         │
-   │  BLK ── 3V3  │       │   │    │    │    │  3V3    │
-   └──────────────┘       └───┼────┼────┼────┼────┼───┘
-                              │    │    │    │    │
-                            [BT1][BT2][BT3][BT4]  │
-                              │    │    │    │    │
-                              └────┴────┴────┴────┘  (outro terminal a GND)
-                                INPUT_PULLUP — botão liga o GPIO a GND
+   │  GND ── GND  │       │   1    2    3    4    5     │
+   │  BLK ── 3V3  │       │   │    │    │    │    │     │
+   └──────────────┘       └───┼────┼────┼────┼────┼────┘
+                              │    │    │    │    │ COM (LOW)
+                            ┌─┴────┴────┴────┴────┴─┐
+                            │  [1] [2] [3] [4]  COM │  Teclado membrana 1x4
+                            └───────────────────────┘  (5 pinos: COM + 4 teclas)
+                                cada tecla liga a sua linha ao COM
+                                COM a LOW (GPIO5) — premir leva o GPIO a LOW
 
    Botoes: GPIO 1/2/3/4  →  botao  →  GND   (sem resistencia externa)
 ```
 
 > **Nota:** o LCD usa `MOSI` (linha de dados SPI) e o SI4703 usa `SDIO` (dados I²C) —
 > são barramentos **independentes**, apesar de na placa rádio o pino se chamar "SDA".
+
+### Alimentação e leitura da bateria (LiPo)
+
+A alimentação é reaproveitada de uma **pequena powerbank** (célula LiPo 1S +
+placa com carregador tipo TP4056 e *boost* para 5 V). A saída **5 V** USB da
+powerbank alimenta o Lolin S2 Mini (pino `5V`) e o **GND** é comum. Para mostrar
+a carga no ecrã, lê-se a tensão da **célula** (`B+`, 3.0–4.2 V) com o ADC.
+
+Como o ADC do ESP32-S2 só aceita até ~3.3 V, usa-se um **divisor resistivo 1:2**
+(R1 = R2 = 100 kΩ) que reduz a tensão a metade: 4.2 V → 2.1 V (dentro da escala).
+O firmware lê em **GPIO6** (ADC1) e multiplica por 2.
+
+```
+   Powerbank (célula LiPo 1S, 3.7 V nominal)
+   ┌───────────────────────────────────────┐
+   │  placa do powerbank                    │
+   │   ┌── B+ (célula, 3.0–4.2V) ───────────┼──► para o divisor (abaixo)
+   │   │                                     │
+   │   ├── saída USB 5V ────────────────────┼──► 5V  do Lolin S2 Mini
+   │   └── B- / GND ──────────────────────┬─┼──► GND do Lolin S2 Mini (comum)
+   └──────────────────────────────────────┼─┘
+                                           │
+   Divisor 1:2 (leitura da carga):        │
+                                          GND
+        B+ ──[ R1 100kΩ ]──┬──[ R2 100kΩ ]── GND
+                           │
+                           ├───────────────── GPIO6 (ADC1)   Vadc = Vbat / 2
+                           │
+                         ──┴── C1 100nF (opcional, filtra ruído)
+                           │
+                          GND
+```
+
+> - **GND comum obrigatório** entre a powerbank e o ESP32, senão a leitura não tem
+>   referência.
+> - Com R1 = R2 = 100 kΩ o consumo do divisor é ~21 µA (desprezável).
+> - Ligar o `B+` exige abrir a powerbank — **respeitar a polaridade**.
+> - Muitas powerbanks pequenas **desligam o boost** com consumos baixos (< ~50 mA);
+>   se isso acontecer, mantém-se a carga ligada por outro meio ou usa-se uma com
+>   *always-on*.
+> - A percentagem é uma estimativa por troços da curva de descarga 1S; podes
+>   desligar tudo com `#define USE_BATTERY 0` em [src/main.cpp](src/main.cpp).
 
 ---
 
@@ -169,12 +217,14 @@ físicos** (por baixo do display) e não fazem parte do desenho.
 | Principal | freq −         | freq +   | → Volume        | → Presets      |
 | Volume    | vol −          | vol +    | Mute            | OK → Principal |
 | Sintonia  | freq −         | freq +   | Guardar memória | Sair           |
-| Presets   | anterior       | seguinte | OK (sintoniza)  | Sair           |
+| Presets   | anterior       | seguinte | OK (sintoniza)¹ | Sair           |
 | Scan      | Iniciar / Stop | —        | —               | Sair           |
 | Menu      | ◄              | ►        | OK (entra)      | Sair           |
 | Mensagem  | fecha          | —        | —               | —              |
 
 > No **Sintonia**, o passo (0.10 / 0.05) muda-se com o **clique longo no botão 2**.
+>
+> ¹ Nos **Presets**, o **clique longo no botão 3** apaga a memória selecionada.
 
 **Timeout de inatividade:** em qualquer ecrã que não o Principal, ao fim de
 **30 s** sem interação volta ao Principal (exceto durante o Scan).
@@ -228,6 +278,7 @@ ESP32S2Mini_FMRadio/
 - [x] Ligar o SI4703 e ativar as chamadas reais.
 - [x] Ler RDS real (nome da estação + radiotext) do SI4703.
 - [x] Persistir memórias e última sintonia/volume na NVS (flash).
-- [ ] Validar os 4 botões físicos no hardware final.
-- [ ] Edição/remoção individual de memórias.
-- [ ] Indicador de nível de bateria (se aplicável).
+- [x] Remoção individual de memórias (clique longo no botão 3 nos Presets).
+- [x] Indicador de nível de bateria da LiPo (ADC + divisor 1:2 — ver esquema acima).
+- [ ] Validar os 4 botões físicos no hardware final
+      (o firmware já regista cada clique no Serial para ajudar nesta verificação).

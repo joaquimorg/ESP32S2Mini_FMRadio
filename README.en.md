@@ -21,6 +21,18 @@ a power-off).
 - **Display:** TFT ST7789, **76×284 px** panel (offset inside the controller's 240×320 RAM)
 - **Radio:** SI4703 (FM + RDS), over I²C
 - **Input:** 4 physical buttons (below the display)
+- **Audio:** PAM8403 amplifier (2×3 W) + 8 Ω / 3 W speaker
+
+### Components
+
+| Component | Image | Description |
+|-----------|:-----:|-------------|
+| **Lolin S2 Mini** | <img src="docs/esp32_s2_mini.webp" width="160"> | ESP32-S2 MCU (35×25 mm), 4 MB Flash + 2 MB PSRAM, native USB-C. |
+| **ST7789 display** | <img src="docs/lcd_display_76x284.webp" width="160"> | 2.25" color TFT, 76×284 px, 4-wire SPI, 2.8–3.3 V supply. |
+| **SI4703** | <img src="docs/SI4703.webp" width="160"> | FM receiver with RDS over I²C; 3.5 mm jack that doubles as the antenna. |
+| **1×4 keypad** | <img src="docs/keyboard_1x4.webp" width="160"> | Membrane strip with 4 buttons (BT1–BT4) used for navigation. |
+| **PAM8403 amplifier** | <img src="docs/pam8403_amp_2x3W.webp" width="160"> | Class-D stereo amplifier 2×3 W, 2.5–5.5 V supply. |
+| **Speaker** | <img src="docs/speaker.webp" width="160"> | Rectangular 8 Ω / 3 W speaker (70×30 mm) for audio output. |
 
 ---
 
@@ -42,14 +54,19 @@ a power-off).
 > `OX=82, OY=18`** and a 90° rotation (see `show()` in [src/main.cpp](src/main.cpp)).
 > Colors are inverted on this panel, hence `tft.invertDisplay(false)`.
 
-### Buttons (to GND, with `INPUT_PULLUP`)
+### 1×4 membrane keypad
 
-| Button | GPIO |
-|--------|------|
-| BT1    | 1    |
-| BT2    | 2    |
-| BT3    | 3    |
-| BT4    | 4    |
+A single strip with **5 pins**: one **common (COM)** line plus the 4 keys. Each key
+ties its line to COM. The COM line is held **LOW** by a GPIO and each key is read
+with `INPUT_PULLUP` (press → pin goes LOW). Alternatively, COM may go straight to **GND**.
+
+| Signal    | GPIO |
+|-----------|------|
+| COM (LOW) | 5    |
+| Key 1     | 1    |
+| Key 2     | 2    |
+| Key 3     | 3    |
+| Key 4     | 4    |
 
 ### SI4703 — FM/RDS (I²C)
 
@@ -84,21 +101,61 @@ a power-off).
    │  DC       ───┼───────┤ 37                  3V3 ───┼───────┼─ VCC (3V3)   │
    │  RST      ───┼───────┤ 38                         │       │  ANT ── wire │
    │  VCC ── 3V3  │       │                            │       └──────────────┘
-   │  GND ── GND  │       │   1    2    3    4         │
-   │  BLK ── 3V3  │       │   │    │    │    │  3V3    │
-   └──────────────┘       └───┼────┼────┼────┼────┼───┘
-                              │    │    │    │    │
-                            [BT1][BT2][BT3][BT4]  │
-                              │    │    │    │    │
-                              └────┴────┴────┴────┘  (other terminal to GND)
-                                INPUT_PULLUP — button ties GPIO to GND
-
-   Buttons: GPIO 1/2/3/4  →  button  →  GND   (no external resistor)
+   │  GND ── GND  │       │   1    2    3    4    5     │
+   │  BLK ── 3V3  │       │   │    │    │    │    │     │
+   └──────────────┘       └───┼────┼────┼────┼────┼────┘
+                              │    │    │    │    │ COM (LOW)
+                            ┌─┴────┴────┴────┴────┴─┐
+                            │  [1] [2] [3] [4]  COM │  1x4 membrane keypad
+                            └───────────────────────┘  (5 pins: COM + 4 keys)
+                                each key ties its line to COM
+                                COM held LOW (GPIO5) — press pulls the GPIO LOW
 ```
 
 > **Note:** the LCD uses `MOSI` (SPI data line) and the SI4703 uses `SDIO`
 > (I²C data) — they are **independent** buses, even though on the radio board the
 > pin is labelled "SDA".
+
+### Power and battery reading (LiPo)
+
+Power is reused from a **small powerbank** (1S LiPo cell + board with a TP4056-style
+charger and a 5 V boost converter). The powerbank's **5 V** USB output feeds the
+Lolin S2 Mini (`5V` pin) and **GND** is shared. To show the charge on screen, the
+**cell** voltage (`B+`, 3.0–4.2 V) is read with the ADC.
+
+Since the ESP32-S2 ADC only accepts up to ~3.3 V, a **1:2 resistor divider**
+(R1 = R2 = 100 kΩ) halves the voltage: 4.2 V → 2.1 V (within range). The firmware
+reads **GPIO6** (ADC1) and multiplies by 2.
+
+```text
+   Powerbank (1S LiPo cell, 3.7 V nominal)
+   ┌───────────────────────────────────────┐
+   │  powerbank board                       │
+   │   ┌── B+ (cell, 3.0–4.2V) ─────────────┼──► to the divider (below)
+   │   │                                     │
+   │   ├── 5V USB output ──────────────────┼──► 5V  of the Lolin S2 Mini
+   │   └── B- / GND ──────────────────────┬─┼──► GND of the Lolin S2 Mini (shared)
+   └──────────────────────────────────────┼─┘
+                                           │
+   1:2 divider (charge reading):          │
+                                          GND
+        B+ ──[ R1 100kΩ ]──┬──[ R2 100kΩ ]── GND
+                           │
+                           ├───────────────── GPIO6 (ADC1)   Vadc = Vbat / 2
+                           │
+                         ──┴── C1 100nF (optional, noise filter)
+                           │
+                          GND
+```
+
+> - **Shared GND is mandatory** between the powerbank and the ESP32, otherwise the
+>   reading has no reference.
+> - With R1 = R2 = 100 kΩ the divider draws ~21 µA (negligible).
+> - Tapping `B+` means opening the powerbank — **mind the polarity**.
+> - Many small powerbanks **shut the boost off** under low load (< ~50 mA); if that
+>   happens, keep the load up or use an always-on model.
+> - The percentage is a piecewise estimate of the 1S discharge curve; everything can
+>   be disabled with `#define USE_BATTERY 0` in [src/main.cpp](src/main.cpp).
 
 ---
 
@@ -159,12 +216,14 @@ buttons are physical** (below the display) and are not part of the drawing.
 | Main    | freq −       | freq +   | → Volume     | → Presets    |
 | Volume  | vol −        | vol +    | Mute         | OK → Main    |
 | Tune    | freq −       | freq +   | Save memory  | Exit         |
-| Presets | previous     | next     | OK (tune)    | Exit         |
+| Presets | previous     | next     | OK (tune)¹   | Exit         |
 | Scan    | Start / Stop | —        | —            | Exit         |
 | Menu    | ◄            | ►        | OK (enter)   | Exit         |
 | Message | dismiss      | —        | —            | —            |
 
 > In **Tune**, the step (0.10 / 0.05) is toggled with a **long press on button 2**.
+>
+> ¹ In **Presets**, a **long press on button 3** deletes the selected memory.
 
 **Inactivity timeout:** on any screen other than Main, after **30 s** with no
 interaction it returns to Main (except while scanning).
@@ -218,6 +277,7 @@ ESP32S2Mini_FMRadio/
 - [x] Wire the SI4703 and enable the real calls.
 - [x] Read real RDS (station name + radiotext) from the SI4703.
 - [x] Persist memories and last frequency/volume in NVS (flash).
-- [ ] Validate the 4 physical buttons on the final hardware.
-- [ ] Individual edit/remove of memories.
-- [ ] Battery level indicator (if applicable).
+- [x] Individual removal of memories (long press on button 3 in Presets).
+- [x] LiPo battery level indicator (ADC + 1:2 divider — see schematic above).
+- [ ] Validate the 4 physical buttons on the final hardware
+      (the firmware already logs every press over Serial to help with this check).

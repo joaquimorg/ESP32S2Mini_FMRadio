@@ -4,8 +4,9 @@
 // ------------------------------------------------------------
 //  Hardware (sugestao de pinos):
 //    Display ST7789 : MOSI35 SCLK36 MISO40 CS34 DC37 RST38
-//    Botoes 1..4    : GPIO1 GPIO2 GPIO3 GPIO4  (a GND, pullup)
+//    Teclado 1x4    : COM=GPIO5 (LOW) ; teclas 1..4 = GPIO1 GPIO2 GPIO3 GPIO4 (pullup)
 //    SI4703 (I2C)   : SDA=GPIO8 SCL=GPIO9 RST=GPIO7
+//    Bateria LiPo   : GPIO6 (ADC1) via divisor 1:2 da celula (ver README)
 //
 //  A radio esta SIMULADA (modelo em RAM). Os pontos de
 //  integracao com o SI4703 estao marcados com TODO[SI4703].
@@ -31,8 +32,16 @@
 // 1 = usa o SI4703 real ; 0 = modelo simulado em RAM
 #define USE_SI4703 1
 
+// 1 = le a carga da LiPo (divisor resistivo no ADC) ; 0 = desliga o indicador
+#define USE_BATTERY 1
+
 // pinos do SI4703 (I2C + reset)
 static const uint8_t PIN_SDA = 8, PIN_SCL = 9, PIN_RST = 7;
+
+// medicao da bateria: GPIO6 = ADC1, le o ponto medio de um divisor 1:2 (R1=R2)
+// ligado a celula LiPo (B+). Vbat = 2 x Vadc. Ver esquema no README.
+static const uint8_t PIN_VBAT = 6;
+static const float   VBAT_DIV = 2.0f;     // razao do divisor (R1=R2=100k)
 
 SI4703 radio;
 RDSParserLocal rds;
@@ -51,8 +60,12 @@ static const int16_t LH = 76;
 
 TFT_eSprite cv = TFT_eSprite(&tft);
 
-// --- Pinos dos botoes ---
-static const uint8_t BTN_PIN[4] = {1, 2, 3, 4};
+// --- Teclado de membrana 1x4 ---
+// Tira unica com 5 pinos: 1 linha comum (COM) + 4 teclas. Cada tecla liga a
+// sua linha ao COM. O COM e' mantido a LOW por um GPIO e cada tecla e' lida com
+// pull-up interno (premir -> pino a LOW). (COM tambem pode ir direto a GND.)
+static const uint8_t BTN_COM    = 5;            // linha comum do teclado (saida LOW)
+static const uint8_t BTN_PIN[4] = {1, 2, 3, 4}; // teclas 1..4
 
 // --- Paleta (RGB565) ---
 #define COL_BG      TFT_BLACK
@@ -90,6 +103,10 @@ struct State {
   int    presetSel = 0;
   int    menuSel   = 0;
   bool   scanning  = false;
+  // bateria (LiPo)
+  bool   battValid = false;   // ja foi feita uma leitura valida
+  int    battPct   = 0;       // 0..100 (estimativa)
+  float  battV     = 0.0f;    // tensao da celula (V)
   // mensagem
   String msgTitle, msgL1, msgL2;
   bool   msgCheck = false;
@@ -115,6 +132,14 @@ static bool storePreset(float f, const String& name) {
   n.toCharArray(presets[nPresets].name, sizeof(presets[nPresets].name));
   nPresets++;
   return true;
+}
+
+// remove uma memoria (desloca as seguintes para tras)
+static void removePreset(int idx) {
+  if (idx < 0 || idx >= nPresets) return;
+  for (int i = idx; i < nPresets - 1; i++) presets[i] = presets[i + 1];
+  nPresets--;
+  if (st.presetSel >= nPresets) st.presetSel = (nPresets > 0) ? nPresets - 1 : 0;
 }
 
 // ---- persistencia das memorias em NVS ("EEPROM" do ESP32) ----
@@ -252,6 +277,40 @@ static void applyFreq() {
 #endif
 }
 
+#if USE_BATTERY
+// Estima a percentagem a partir da tensao da celula (curva de descarga 1S
+// aproximada por troços). A LiPo nao e linear, por isso usa-se uma tabela.
+static int battPercentFromMv(int mv) {
+  static const int lut[][2] = {
+    {4200, 100}, {4100, 90}, {4000, 80}, {3900, 70}, {3850, 60}, {3800, 55},
+    {3750, 45},  {3700, 35}, {3650, 25}, {3600, 15}, {3500,  8}, {3400, 3}, {3300, 0}
+  };
+  const int n = sizeof(lut) / sizeof(lut[0]);
+  if (mv >= lut[0][0])     return 100;
+  if (mv <= lut[n - 1][0]) return 0;
+  for (int i = 1; i < n; i++)
+    if (mv >= lut[i][0]) {
+      int v0 = lut[i][0], p0 = lut[i][1], v1 = lut[i - 1][0], p1 = lut[i - 1][1];
+      return p0 + (mv - v0) * (p1 - p0) / (v1 - v0);
+    }
+  return 0;
+}
+
+// Le o ADC (media de 8 amostras) e atualiza estado. A primeira leitura e
+// imediata; depois e' refrescada a cada 5 s (a tensao varia devagar).
+static void pollBattery() {
+  static uint32_t last = 0;
+  if (st.battValid && millis() - last < 5000) return;
+  last = millis();
+  uint32_t acc = 0;
+  for (int i = 0; i < 8; i++) acc += analogReadMilliVolts(PIN_VBAT);
+  int vbatMv = (int)((acc / 8) * VBAT_DIV);   // tensao real da celula (mV)
+  st.battV     = vbatMv / 1000.0f;
+  st.battPct   = battPercentFromMv(vbatMv);
+  st.battValid = true;
+}
+#endif
+
 // =================== HELPERS DE DESENHO ====================
 // --- gestao da fonte smooth ativa ---
 // Uma fonte smooth carregada SOBREPOE-SE as fontes numeradas (mesmo passando o
@@ -292,6 +351,19 @@ static void drawSignal(int x, int y, int level) {
     int h = 2 + i * 2;
     cv.fillRect(x + i * 3, y + (8 - h), 2, h, (i < level) ? COL_GREEN : COL_DKGREY);
   }
+}
+
+// icone de bateria; xr = aresta direita, desenha para a esquerda. Devolve a
+// largura ocupada (corpo + terminal) para encadear outros elementos.
+static int drawBattery(int xr, int y, int pct) {
+  const int w = 16, h = 8;
+  int x = xr - w;
+  cv.fillRect(xr, y + 2, 2, h - 4, COL_GREY);     // terminal (polo +)
+  cv.drawRoundRect(x, y, w, h, 1, COL_GREY);       // contorno
+  int fw = (w - 2) * constrain(pct, 0, 100) / 100;
+  uint16_t c = (pct <= 20) ? COL_ORANGE : COL_GREEN;
+  if (fw > 0) cv.fillRect(x + 1, y + 1, fw, h - 2, c);
+  return w + 2;
 }
 
 static void drawFooter(const char* a, const char* b, const char* c, const char* d) {
@@ -447,6 +519,12 @@ static void screenMain() {
   txt(vol.c_str(), LW / 2, 4, st.muted ? COL_ORANGE : COL_CYAN, 1, TC_DATUM);
 
   int rx = LW - 10;
+#if USE_BATTERY
+  if (st.battValid) {                      // bateria no canto direito
+    rx -= drawBattery(rx, 2, st.battPct);
+    rx -= 4;
+  }
+#endif
   int pIdx = currentPreset();
   if (pIdx >= 0) {                         // chip da memoria (canto direito)
     char pn[5]; snprintf(pn, sizeof(pn), "P%02d", pIdx + 1);
@@ -521,6 +599,7 @@ static void screenPresets() {
   int page = st.presetSel / 4;
   char pg[12]; snprintf(pg, sizeof(pg), "PAG %d/%d", page + 1, pages);
   txt(pg, LW - 8, 4, COL_GREY, 1, TR_DATUM);
+  txt("seg.3 apaga", 8, 4, COL_DKGREY, 1);   // dica: clique longo no 3 apaga
   triLeft(8, 38, 5, COL_GREY);
   triRight(LW - 8, 38, 5, COL_GREY);
   int x = 18, step = 62;
@@ -722,6 +801,12 @@ static void handleEvent(int ev) {
       if (ev == 1 && st.presetSel > 0)            st.presetSel--;
       if (ev == 2 && st.presetSel < nPresets - 1) st.presetSel++;
       if (ev == 3) { st.freq = presets[st.presetSel].f; applyFreq(); markSettingsDirty(); st.screen = SC_MAIN; }
+      if (ev == 13) {                                  // clique longo 3 -> apaga memoria
+        char l1[16]; snprintf(l1, sizeof(l1), "%.2f MHz", presets[st.presetSel].f);
+        removePreset(st.presetSel);
+        savePresetsNVS();
+        showMessage("MEMORIA APAGADA", l1, "", false, nPresets ? SC_PRESETS : SC_MAIN);
+      }
       if (ev == 4) st.screen = SC_MAIN;
       break;
     case SC_SCAN:
@@ -839,7 +924,14 @@ static int pollSerial() {
 
 void setup() {
   Serial.begin(115200);
+  pinMode(BTN_COM, OUTPUT);
+  digitalWrite(BTN_COM, LOW);                    // linha comum do teclado 1x4 a LOW
   for (int i = 0; i < 4; i++) pinMode(BTN_PIN[i], INPUT_PULLUP);
+
+#if USE_BATTERY
+  analogReadResolution(12);
+  analogSetPinAttenuation(PIN_VBAT, ADC_11db);   // fundo de escala ~3.1V no pino
+#endif
 
   tft.init();
   tft.setRotation(0);
@@ -891,9 +983,18 @@ void loop() {
 
   int ev = pollSerial();
   if (!ev) ev = pollButtons();
-  if (ev) { handleEvent(ev); lastActivity = millis(); }
+  if (ev) {
+    // log para ajudar a validar os 4 botoes no hardware (passo dos proximos passos)
+    if (ev >= 1 && ev <= 4)        Serial.printf("BTN %d: clique curto\n", ev);
+    else if (ev >= 11 && ev <= 14) Serial.printf("BTN %d: clique longo\n", ev - 10);
+    handleEvent(ev); lastActivity = millis();
+  }
 
   updateScan();
+
+#if USE_BATTERY
+  pollBattery();
+#endif
 
 #if USE_SI4703
   // RDS + RSSI/estereo lidos diretamente do chip (ver pollSI4703RDS).
