@@ -57,16 +57,19 @@ a power-off).
 ### 1×4 membrane keypad
 
 A single strip with **5 pins**: one **common (COM)** line plus the 4 keys. Each key
-ties its line to COM. The COM line is held **LOW** by a GPIO and each key is read
-with `INPUT_PULLUP` (press → pin goes LOW). Alternatively, COM may go straight to **GND**.
+ties its line to COM. **COM goes straight to `GND`** and each key is read with
+`INPUT_PULLUP` (press → pin goes LOW).
 
-| Signal    | GPIO |
-|-----------|------|
-| COM (LOW) | 5    |
-| Key 1     | 1    |
-| Key 2     | 2    |
-| Key 3     | 3    |
-| Key 4     | 4    |
+> ⚠️ COM must go to **GND** — **never** to `3V3`/`5V` or to a driven GPIO. Wiring COM
+> to a power rail creates a **short** (regulator overheating / boot loop).
+
+| Signal  | GPIO |
+|---------|------|
+| COM     | GND  |
+| Key 1   | 1    |
+| Key 2   | 2    |
+| Key 3   | 3    |
+| Key 4   | 4    |
 
 ### SI4703 — FM/RDS (I²C)
 
@@ -101,15 +104,15 @@ with `INPUT_PULLUP` (press → pin goes LOW). Alternatively, COM may go straight
    │  DC       ───┼───────┤ 37                  3V3 ───┼───────┼─ VCC (3V3)   │
    │  RST      ───┼───────┤ 38                         │       │  ANT ── wire │
    │  VCC ── 3V3  │       │                            │       └──────────────┘
-   │  GND ── GND  │       │   1    2    3    4    5     │
+   │  GND ── GND  │       │   1    2    3    4   GND    │
    │  BLK ── 3V3  │       │   │    │    │    │    │     │
    └──────────────┘       └───┼────┼────┼────┼────┼────┘
-                              │    │    │    │    │ COM (LOW)
+                              │    │    │    │    │ COM ── GND
                             ┌─┴────┴────┴────┴────┴─┐
                             │  [1] [2] [3] [4]  COM │  1x4 membrane keypad
                             └───────────────────────┘  (5 pins: COM + 4 keys)
                                 each key ties its line to COM
-                                COM held LOW (GPIO5) — press pulls the GPIO LOW
+                                COM to GND (NEVER to 3V3/5V) — press pulls the GPIO LOW
 ```
 
 > **Note:** the LCD uses `MOSI` (SPI data line) and the SI4703 uses `SDIO`

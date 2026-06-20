@@ -4,7 +4,7 @@
 // ------------------------------------------------------------
 //  Hardware (sugestao de pinos):
 //    Display ST7789 : MOSI35 SCLK36 MISO40 CS34 DC37 RST38
-//    Teclado 1x4    : COM=GPIO5 (LOW) ; teclas 1..4 = GPIO1 GPIO2 GPIO3 GPIO4 (pullup)
+//    Teclado 1x4    : COM=GND ; teclas 1..4 = GPIO1 GPIO2 GPIO3 GPIO4 (pullup)
 //    SI4703 (I2C)   : SDA=GPIO8 SCL=GPIO9 RST=GPIO7
 //    Bateria LiPo   : GPIO6 (ADC1) via divisor 1:2 da celula (ver README)
 //
@@ -62,10 +62,11 @@ TFT_eSprite cv = TFT_eSprite(&tft);
 
 // --- Teclado de membrana 1x4 ---
 // Tira unica com 5 pinos: 1 linha comum (COM) + 4 teclas. Cada tecla liga a
-// sua linha ao COM. O COM e' mantido a LOW por um GPIO e cada tecla e' lida com
-// pull-up interno (premir -> pino a LOW). (COM tambem pode ir direto a GND.)
-static const uint8_t BTN_COM    = 5;            // linha comum do teclado (saida LOW)
-static const uint8_t BTN_PIN[4] = {1, 2, 3, 4}; // teclas 1..4
+// sua linha ao COM. O COM liga DIRETAMENTE a GND (NAO a um GPIO nem a 3V3/5V) e
+// cada tecla e' lida com pull-up interno (premir -> pino a LOW).
+// (Antes o COM era conduzido pelo GPIO5; passou a GND para evitar que um pino
+//  ficasse em curto com a alimentacao em caso de erro de ligacao.)
+static const uint8_t BTN_PIN[4] = {2, 1, 4, 3}; // teclas 1..4
 
 // --- Paleta (RGB565) ---
 #define COL_BG      TFT_BLACK
@@ -924,8 +925,7 @@ static int pollSerial() {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(BTN_COM, OUTPUT);
-  digitalWrite(BTN_COM, LOW);                    // linha comum do teclado 1x4 a LOW
+  // COM do teclado vai a GND (nao a um GPIO), por isso so configuramos as teclas.
   for (int i = 0; i < 4; i++) pinMode(BTN_PIN[i], INPUT_PULLUP);
 
 #if USE_BATTERY

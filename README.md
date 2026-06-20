@@ -56,16 +56,20 @@ O projeto inclui uma interface gráfica completa (7 ecrãs) com navegação por
 ### Teclado de membrana 1×4
 
 Tira única com **5 pinos**: uma linha **comum (COM)** mais as 4 teclas. Cada tecla
-liga a sua linha ao COM. O COM é mantido a **LOW** por um GPIO e cada tecla é lida
-com `INPUT_PULLUP` (premir → pino a LOW). Em alternativa, o COM pode ir direto a **GND**.
+liga a sua linha ao COM. O **COM liga diretamente a `GND`** e cada tecla é lida com
+`INPUT_PULLUP` (premir → pino a LOW).
 
-| Sinal     | GPIO |
-|-----------|------|
-| COM (LOW) | 5    |
-| Tecla 1   | 1    |
-| Tecla 2   | 2    |
-| Tecla 3   | 3    |
-| Tecla 4   | 4    |
+> ⚠️ O COM tem de ir a **GND** — **nunca** a `3V3`/`5V` nem a um GPIO conduzido. Uma
+> ligação errada do COM a uma linha de alimentação cria um **curto** (regulador a
+> aquecer / boot loop).
+
+| Sinal   | GPIO |
+|---------|------|
+| COM     | GND  |
+| Tecla 1 | 1    |
+| Tecla 2 | 2    |
+| Tecla 3 | 3    |
+| Tecla 4 | 4    |
 
 ### SI4703 — FM/RDS (I²C)
 
@@ -100,15 +104,15 @@ com `INPUT_PULLUP` (premir → pino a LOW). Em alternativa, o COM pode ir direto
    │  DC       ───┼───────┤ 37                  3V3 ───┼───────┼─ VCC (3V3)   │
    │  RST      ───┼───────┤ 38                         │       │  ANT ── fio  │
    │  VCC ── 3V3  │       │                            │       └──────────────┘
-   │  GND ── GND  │       │   1    2    3    4    5     │
+   │  GND ── GND  │       │   1    2    3    4   GND    │
    │  BLK ── 3V3  │       │   │    │    │    │    │     │
    └──────────────┘       └───┼────┼────┼────┼────┼────┘
-                              │    │    │    │    │ COM (LOW)
+                              │    │    │    │    │ COM ── GND
                             ┌─┴────┴────┴────┴────┴─┐
                             │  [1] [2] [3] [4]  COM │  Teclado membrana 1x4
                             └───────────────────────┘  (5 pinos: COM + 4 teclas)
                                 cada tecla liga a sua linha ao COM
-                                COM a LOW (GPIO5) — premir leva o GPIO a LOW
+                                COM a GND (NUNCA a 3V3/5V) — premir leva o GPIO a LOW
 
    Botoes: GPIO 1/2/3/4  →  botao  →  GND   (sem resistencia externa)
 ```
