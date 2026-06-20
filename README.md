@@ -88,6 +88,8 @@ liga a sua linha ao COM. O **COM liga diretamente a `GND`** e cada tecla é lida
 
 ### Diagrama de ligações
 
+**Sinais (dados) — para o ESP32:**
+
 ```
                           ┌───────────────────────────┐
                           │      Lolin S2 Mini         │
@@ -100,65 +102,88 @@ liga a sua linha ao COM. O **COM liga diretamente a `GND`** e cada tecla é lida
    │  MOSI/SDA ───┼───────┤ 35                       8 ├───────┼─ SDIO (SDA)  │
    │  SCLK     ───┼───────┤ 36                       9 ├───────┼─ SCLK (SCL)  │
    │  MISO     ───┼───────┤ 40                       7 ├───────┼─ RST         │
-   │  CS       ───┼───────┤ 34                         │       │  GND ── GND  │
-   │  DC       ───┼───────┤ 37                  3V3 ───┼───────┼─ VCC (3V3)   │
-   │  RST      ───┼───────┤ 38                         │       │  ANT ── fio  │
-   │  VCC ── 3V3  │       │                            │       └──────────────┘
-   │  GND ── GND  │       │   1    2    3    4   GND    │
-   │  BLK ── 3V3  │       │   │    │    │    │    │     │
-   └──────────────┘       └───┼────┼────┼────┼────┼────┘
-                              │    │    │    │    │ COM ── GND
-                            ┌─┴────┴────┴────┴────┴─┐
-                            │  [1] [2] [3] [4]  COM │  Teclado membrana 1x4
-                            └───────────────────────┘  (5 pinos: COM + 4 teclas)
-                                cada tecla liga a sua linha ao COM
-                                COM a GND (NUNCA a 3V3/5V) — premir leva o GPIO a LOW
+   │  CS       ───┼───────┤ 34                         │       │  L/R OUT ─┐  │
+   │  DC       ───┼───────┤ 37                         │       │  ANT ── fio  │
+   │  RST      ───┼───────┤ 38                         │       └───────────┼──┘
+   │  VCC ◄ 3V3* │        │   1    2    3    4   GND    │                   │ áudio
+   │  BLK ◄ 3V3* │        │   │    │    │    │    │     │                   ▼
+   │  GND ── GND  │       └───┼────┼────┼────┼────┼────┘        ┌─────────────────┐
+   └──────────────┘          │    │    │    │    │ COM ── GND   │ PAM8403  2x3W   │
+                           ┌──┴────┴────┴────┴────┴┐            │  IN  ◄ L/R OUT  │
+                           │  [1] [2] [3] [4]  COM │  teclado   │  OUT ─► colunas │
+                           └───────────────────────┘  1x4       │  VCC ◄ 3V3*     │
+                                                                 └─────────────────┘
+   * VCC/BLK dos periféricos NÃO vêm do pino 3V3 do Lolin — vêm do BUCK (ver abaixo).
+   Teclado: cada tecla liga a sua linha (GPIO1-4) ao COM; COM a GND (NUNCA a 3V3/5V).
+```
 
-   Botoes: GPIO 1/2/3/4  →  botao  →  GND   (sem resistencia externa)
+**Alimentação — tudo a 3.3 V a partir do buck externo:**
+
+```
+   Powerbank 5V ──┬───────────────► 5V  do Lolin S2 Mini  (→ reg. interno → MCU)
+                  │
+                  └─► Buck 3.3V ───► 3V3* ──┬─► Display  VCC + BLK
+                      (≥2A, ex.            ├─► SI4703   VCC
+                       MP1584)             └─► PAM8403  VCC   (+ cap. 470–1000µF)
+   GND ── comum a TUDO (powerbank, buck, ESP32, display, SI4703, amp, colunas)
 ```
 
 > **Nota:** o LCD usa `MOSI` (linha de dados SPI) e o SI4703 usa `SDIO` (dados I²C) —
 > são barramentos **independentes**, apesar de na placa rádio o pino se chamar "SDA".
 
-### Alimentação e leitura da bateria (LiPo)
+### Alimentação
 
 A alimentação é reaproveitada de uma **pequena powerbank** (célula LiPo 1S +
-placa com carregador tipo TP4056 e *boost* para 5 V). A saída **5 V** USB da
-powerbank alimenta o Lolin S2 Mini (pino `5V`) e o **GND** é comum. Para mostrar
-a carga no ecrã, lê-se a tensão da **célula** (`B+`, 3.0–4.2 V) com o ADC.
+placa com carregador tipo TP4056 e *boost* para 5 V). A saída **5 V** USB
+alimenta o sistema e o **GND** é comum a tudo.
 
-Como o ADC do ESP32-S2 só aceita até ~3.3 V, usa-se um **divisor resistivo 1:2**
-(R1 = R2 = 100 kΩ) que reduz a tensão a metade: 4.2 V → 2.1 V (dentro da escala).
-O firmware lê em **GPIO6** (ADC1) e multiplica por 2.
+O regulador interno do Lolin S2 Mini é fraco (~300–500 mA) e **não aguenta o
+amplificador** — foi o que o pôs a aquecer. Por isso usa-se um **regulador de
+3.3 V externo** (idealmente um *buck*, ex. **MP1584** de ≥ 2 A — aquece pouco;
+um AMS1117 também serve mas dissipa mais) que alimenta **todos os periféricos a
+3.3 V: display, SI4703 e amplificador PAM8403**. O ESP32 continua a ser
+alimentado pelos **5 V** (pino `5V`, regulador interno só para o MCU).
 
 ```
-   Powerbank (célula LiPo 1S, 3.7 V nominal)
-   ┌───────────────────────────────────────┐
-   │  placa do powerbank                    │
-   │   ┌── B+ (célula, 3.0–4.2V) ───────────┼──► para o divisor (abaixo)
-   │   │                                     │
-   │   ├── saída USB 5V ────────────────────┼──► 5V  do Lolin S2 Mini
-   │   └── B- / GND ──────────────────────┬─┼──► GND do Lolin S2 Mini (comum)
-   └──────────────────────────────────────┼─┘
-                                           │
-   Divisor 1:2 (leitura da carga):        │
-                                          GND
-        B+ ──[ R1 100kΩ ]──┬──[ R2 100kΩ ]── GND
-                           │
-                           ├───────────────── GPIO6 (ADC1)   Vadc = Vbat / 2
-                           │
-                         ──┴── C1 100nF (opcional, filtra ruído)
-                           │
-                          GND
+   Powerbank 5V ──┬── Lolin S2 Mini (pino 5V → reg. interno → 3V3 só do MCU)
+                  │
+                  └── Regulador 3.3V externo (buck, ≥2A) ──┬── Display VCC (3V3)
+                                                           ├── SI4703 VCC (3V3)
+                                                           └── PAM8403 VCC (3V3)
+   GND comum a TODOS os blocos
 ```
 
-> - **GND comum obrigatório** entre a powerbank e o ESP32, senão a leitura não tem
->   referência.
+> - **Ajusta o buck para 3.3 V** (mede com o multímetro) **antes** de ligar os
+>   periféricos.
+> - **Não unir** a saída do buck ao pino `3V3` do Lolin (não juntar dois
+>   reguladores). O ESP32 fica no seu próprio 3V3 (via `5V`); os periféricos no buck.
+> - Como ambos os lados são 3.3 V, o I²C/SPI continua compatível (sem level shifting).
+> - **GND comum** obrigatório entre powerbank, buck, ESP32 e todos os periféricos.
+> - Põe um **condensador de reservatório** (~470–1000 µF) junto ao amplificador
+>   (+ 100 nF de desacoplamento) para os picos de corrente do áudio.
+> - A 3.3 V o PAM8403 dá **menos potência** (~0.5 W/canal) do que a 5 V — é o
+>   compromisso de manter tudo no mesmo rail.
+
+### Leitura da carga (LiPo)
+
+Para mostrar a carga no ecrã, lê-se a tensão da **célula** (`B+`, 3.0–4.2 V) com o
+ADC. Como o ADC do ESP32-S2 só aceita até ~3.3 V, usa-se um **divisor resistivo
+1:2** (R1 = R2 = 100 kΩ): 4.2 V → 2.1 V (dentro da escala). O firmware lê em
+**GPIO6** (ADC1) e multiplica por 2.
+
+```
+        B+ (célula) ──[ R1 100kΩ ]──┬──[ R2 100kΩ ]── GND
+                                    │
+                                    ├───────────────── GPIO6 (ADC1)   Vadc = Vbat / 2
+                                    │
+                                  ──┴── C1 100nF (opcional, filtra ruído)
+                                    │
+                                   GND
+```
+
+> - Ligar o `B+` exige abrir a powerbank — **respeitar a polaridade**; GND comum.
 > - Com R1 = R2 = 100 kΩ o consumo do divisor é ~21 µA (desprezável).
-> - Ligar o `B+` exige abrir a powerbank — **respeitar a polaridade**.
-> - Muitas powerbanks pequenas **desligam o boost** com consumos baixos (< ~50 mA);
->   se isso acontecer, mantém-se a carga ligada por outro meio ou usa-se uma com
->   *always-on*.
+> - Muitas powerbanks pequenas **desligam o boost** com consumos baixos (< ~50 mA).
 > - A percentagem é uma estimativa por troços da curva de descarga 1S; podes
 >   desligar tudo com `#define USE_BATTERY 0` em [src/main.cpp](src/main.cpp).
 

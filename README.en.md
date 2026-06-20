@@ -88,6 +88,8 @@ ties its line to COM. **COM goes straight to `GND`** and each key is read with
 
 ### Wiring diagram
 
+**Signals (data) — to the ESP32:**
+
 ```text
                           ┌───────────────────────────┐
                           │      Lolin S2 Mini         │
@@ -100,63 +102,88 @@ ties its line to COM. **COM goes straight to `GND`** and each key is read with
    │  MOSI/SDA ───┼───────┤ 35                       8 ├───────┼─ SDIO (SDA)  │
    │  SCLK     ───┼───────┤ 36                       9 ├───────┼─ SCLK (SCL)  │
    │  MISO     ───┼───────┤ 40                       7 ├───────┼─ RST         │
-   │  CS       ───┼───────┤ 34                         │       │  GND ── GND  │
-   │  DC       ───┼───────┤ 37                  3V3 ───┼───────┼─ VCC (3V3)   │
-   │  RST      ───┼───────┤ 38                         │       │  ANT ── wire │
-   │  VCC ── 3V3  │       │                            │       └──────────────┘
-   │  GND ── GND  │       │   1    2    3    4   GND    │
-   │  BLK ── 3V3  │       │   │    │    │    │    │     │
-   └──────────────┘       └───┼────┼────┼────┼────┼────┘
-                              │    │    │    │    │ COM ── GND
-                            ┌─┴────┴────┴────┴────┴─┐
-                            │  [1] [2] [3] [4]  COM │  1x4 membrane keypad
-                            └───────────────────────┘  (5 pins: COM + 4 keys)
-                                each key ties its line to COM
-                                COM to GND (NEVER to 3V3/5V) — press pulls the GPIO LOW
+   │  CS       ───┼───────┤ 34                         │       │  L/R OUT ─┐  │
+   │  DC       ───┼───────┤ 37                         │       │  ANT ── wire │
+   │  RST      ───┼───────┤ 38                         │       └───────────┼──┘
+   │  VCC ◄ 3V3* │        │   1    2    3    4   GND    │                   │ audio
+   │  BLK ◄ 3V3* │        │   │    │    │    │    │     │                   ▼
+   │  GND ── GND  │       └───┼────┼────┼────┼────┼────┘        ┌─────────────────┐
+   └──────────────┘          │    │    │    │    │ COM ── GND   │ PAM8403  2x3W   │
+                           ┌──┴────┴────┴────┴────┴┐            │  IN  ◄ L/R OUT  │
+                           │  [1] [2] [3] [4]  COM │  keypad    │  OUT ─► speakers│
+                           └───────────────────────┘  1x4       │  VCC ◄ 3V3*     │
+                                                                 └─────────────────┘
+   * peripheral VCC/BLK do NOT come from the Lolin 3V3 pin — they come from the BUCK (below).
+   Keypad: each key ties its line (GPIO1-4) to COM; COM to GND (NEVER to 3V3/5V).
+```
+
+**Power — everything at 3.3 V from the external buck:**
+
+```text
+   Powerbank 5V ──┬───────────────► 5V  of the Lolin S2 Mini  (→ onboard reg → MCU)
+                  │
+                  └─► Buck 3.3V ───► 3V3* ──┬─► Display  VCC + BLK
+                      (≥2A, e.g.           ├─► SI4703   VCC
+                       MP1584)             └─► PAM8403  VCC   (+ 470–1000µF cap)
+   GND ── shared across EVERYTHING (powerbank, buck, ESP32, display, SI4703, amp, speakers)
 ```
 
 > **Note:** the LCD uses `MOSI` (SPI data line) and the SI4703 uses `SDIO`
 > (I²C data) — they are **independent** buses, even though on the radio board the
 > pin is labelled "SDA".
 
-### Power and battery reading (LiPo)
+### Power
 
 Power is reused from a **small powerbank** (1S LiPo cell + board with a TP4056-style
-charger and a 5 V boost converter). The powerbank's **5 V** USB output feeds the
-Lolin S2 Mini (`5V` pin) and **GND** is shared. To show the charge on screen, the
-**cell** voltage (`B+`, 3.0–4.2 V) is read with the ADC.
+charger and a 5 V boost converter). The **5 V** USB output feeds the system and
+**GND** is shared everywhere.
 
-Since the ESP32-S2 ADC only accepts up to ~3.3 V, a **1:2 resistor divider**
-(R1 = R2 = 100 kΩ) halves the voltage: 4.2 V → 2.1 V (within range). The firmware
-reads **GPIO6** (ADC1) and multiplies by 2.
+The Lolin S2 Mini's onboard regulator is weak (~300–500 mA) and **cannot drive the
+amplifier** — that is what made it overheat. So an **external 3.3 V regulator**
+(ideally a *buck*, e.g. **MP1584** rated ≥ 2 A — runs cool; an AMS1117 also works
+but dissipates more) powers **all the 3.3 V peripherals: display, SI4703 and the
+PAM8403 amplifier**. The ESP32 is still powered from **5 V** (`5V` pin, its onboard
+regulator only for the MCU).
 
 ```text
-   Powerbank (1S LiPo cell, 3.7 V nominal)
-   ┌───────────────────────────────────────┐
-   │  powerbank board                       │
-   │   ┌── B+ (cell, 3.0–4.2V) ─────────────┼──► to the divider (below)
-   │   │                                     │
-   │   ├── 5V USB output ──────────────────┼──► 5V  of the Lolin S2 Mini
-   │   └── B- / GND ──────────────────────┬─┼──► GND of the Lolin S2 Mini (shared)
-   └──────────────────────────────────────┼─┘
-                                           │
-   1:2 divider (charge reading):          │
-                                          GND
-        B+ ──[ R1 100kΩ ]──┬──[ R2 100kΩ ]── GND
-                           │
-                           ├───────────────── GPIO6 (ADC1)   Vadc = Vbat / 2
-                           │
-                         ──┴── C1 100nF (optional, noise filter)
-                           │
-                          GND
+   Powerbank 5V ──┬── Lolin S2 Mini (5V pin → onboard reg → 3V3 for the MCU only)
+                  │
+                  └── External 3.3V regulator (buck, ≥2A) ──┬── Display VCC (3V3)
+                                                            ├── SI4703 VCC (3V3)
+                                                            └── PAM8403 VCC (3V3)
+   GND shared across ALL blocks
 ```
 
-> - **Shared GND is mandatory** between the powerbank and the ESP32, otherwise the
->   reading has no reference.
+> - **Trim the buck to 3.3 V** (measure it) **before** connecting the peripherals.
+> - **Do not tie** the buck output to the Lolin `3V3` pin (don't parallel two
+>   regulators). The ESP32 keeps its own 3V3 (via `5V`); the peripherals use the buck.
+> - Both sides are 3.3 V, so I²C/SPI stays compatible (no level shifting).
+> - **Shared GND** is mandatory between powerbank, buck, ESP32 and all peripherals.
+> - Add a **bulk capacitor** (~470–1000 µF) next to the amplifier (+ 100 nF
+>   decoupling) for the audio current peaks.
+> - At 3.3 V the PAM8403 delivers **less power** (~0.5 W/ch) than at 5 V — the
+>   trade-off of keeping everything on one rail.
+
+### Battery charge reading (LiPo)
+
+To show the charge on screen, the **cell** voltage (`B+`, 3.0–4.2 V) is read with the
+ADC. Since the ESP32-S2 ADC only accepts up to ~3.3 V, a **1:2 resistor divider**
+(R1 = R2 = 100 kΩ) halves it: 4.2 V → 2.1 V (within range). The firmware reads
+**GPIO6** (ADC1) and multiplies by 2.
+
+```text
+        B+ (cell) ──[ R1 100kΩ ]──┬──[ R2 100kΩ ]── GND
+                                  │
+                                  ├───────────────── GPIO6 (ADC1)   Vadc = Vbat / 2
+                                  │
+                                ──┴── C1 100nF (optional, noise filter)
+                                  │
+                                 GND
+```
+
+> - Tapping `B+` means opening the powerbank — **mind the polarity**; shared GND.
 > - With R1 = R2 = 100 kΩ the divider draws ~21 µA (negligible).
-> - Tapping `B+` means opening the powerbank — **mind the polarity**.
-> - Many small powerbanks **shut the boost off** under low load (< ~50 mA); if that
->   happens, keep the load up or use an always-on model.
+> - Many small powerbanks **shut the boost off** under low load (< ~50 mA).
 > - The percentage is a piecewise estimate of the 1S discharge curve; everything can
 >   be disabled with `#define USE_BATTERY 0` in [src/main.cpp](src/main.cpp).
 
