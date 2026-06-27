@@ -33,7 +33,7 @@ interior_d = 32;
 
 edge_margin = 7;
 tb_margin   = 9;
-gap_spk_lcd = 5;
+gap_spk_lcd = 1;
 
 // chanfros (bisel) -- todos a 45 graus => imprimem sem suporte
 face_chamf  = 1.8;
@@ -93,9 +93,9 @@ center_w = lcd_mod_w + 2*lcd_mod_clear + 2*lcd_frame_wall + 2*abs(lcd_aa_off_x);
 //  A abertura tem de deixar passar o conetor (mede a tua ficha!).
 // ---------------------------------------------------------------------
 slot_gap_from_lcd = 25;
-cable_slot_w = 22;     // largura da abertura (>= largura da ficha)
-cable_slot_h = 6.0;    // altura da abertura (>= espessura da ficha)
-cable_slot_r = 2.0;
+cable_slot_w = 15;     // largura da abertura (>= largura da ficha)
+cable_slot_h = 4.5;    // altura da abertura (>= espessura da ficha)
+cable_slot_r = 1.0;
 
 // ---------------------------------------------------------------------
 //  ETIQUETA gravada
