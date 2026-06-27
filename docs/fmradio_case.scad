@@ -31,9 +31,9 @@ face_t     = 3.0;
 corner_r   = 4.0;
 interior_d = 32;
 
-edge_margin = 9;
+edge_margin = 7;
 tb_margin   = 9;
-gap_spk_lcd = 7;
+gap_spk_lcd = 5;
 
 // chanfros (bisel) -- todos a 45 graus => imprimem sem suporte
 face_chamf  = 1.8;
@@ -57,24 +57,45 @@ grille_slot_w   = 2.4;
 grille_frame_gap = 3.5;
 
 // ---------------------------------------------------------------------
-//  LCD ST7789 (paisagem, area activa ~57 x 15)
+//  LCD ST7789 76x284  --  medidas REAIS da folha (GoldenMorning 8 pinos)
+//
+//  Em PAISAGEM (comprimento na horizontal):
+//    PCB 73.15 x 21.08 | LCM 62.5 x 17.9 | LCD 60.55 x 17 |
+//    POL 57.25 x 16.7 | Area activa 55.295 x 14.797
+//  A area activa esta centrada no vidro; o PCB tem ~3.78 mm de desvio
+//  (fila de 8 pinos num topo, 2 furos Ø2.5 no outro).
+//  >> ORIENTACAO ASSUMIDA: pinos do lado DIREITO (+X) <<
+//     (se montares com os pinos a esquerda: lcd_aa_off_x = -3.78 e lcd_fpc_side = 2)
 // ---------------------------------------------------------------------
-lcd_win_w = 58;
-lcd_win_h = 16;
-lcd_pocket_w = 66;
-lcd_pocket_h = 24;
-lcd_pocket_depth = 1.2;
-lcd_offset_y = 9;
-lcd_frame_gap = 3.5;
-center_w = lcd_pocket_w;
+lcd_mod_w     = 73.15;  // contorno PCB (dim. MAIOR, paisagem)
+lcd_mod_h     = 21.08;  // contorno PCB (dim. MENOR)
+lcd_mod_clear = 0.5;    // folga do encaixe, por lado
+lcd_frame_h   = 3.5;    // altura das paredes de retencao (para dentro)
+lcd_frame_wall= 1.6;    // espessura das paredes de retencao
+
+lcd_aa_w = 55.295;      // area ACTIVA visivel (dim. maior)
+lcd_aa_h = 14.797;      // area ACTIVA visivel (dim. menor)
+lcd_aa_off_x = 3.78;    // desvio da area activa vs centro do PCB (pinos a +X)
+lcd_aa_off_y = 0;       // (centrada no eixo curto)
+lcd_win_margin = 0.6;   // janela = area activa + esta folga
+
+lcd_fpc_w    = 20;      // folga p/ a fila de 8 pinos / fios (no topo dos pinos)
+lcd_fpc_side = 3;       // lado dos pinos: 0=baixo 1=cima 2=esq 3=dir
+
+lcd_offset_y = 9;       // posicao vertical do ecra na frente
+lcd_frame_gap = 3.5;    // moldura gravada a volta da janela
+
+// largura central reservada (mantem o ECRA centrado, contendo o PCB desviado)
+center_w = lcd_mod_w + 2*lcd_mod_clear + 2*lcd_frame_wall + 2*abs(lcd_aa_off_x);
 
 // ---------------------------------------------------------------------
-//  MEMBRANA 1x4 (cola por fora) -- so a passagem da fita
+//  MEMBRANA 1x4 (cola por fora) -- passagem da fita E DA FICHA
+//  A abertura tem de deixar passar o conetor (mede a tua ficha!).
 // ---------------------------------------------------------------------
 slot_gap_from_lcd = 25;
-cable_slot_w = 14;
-cable_slot_h = 2.5;
-cable_slot_r = 1.0;
+cable_slot_w = 22;     // largura da abertura (>= largura da ficha)
+cable_slot_h = 6.0;    // altura da abertura (>= espessura da ficha)
+cable_slot_r = 2.0;
 
 // ---------------------------------------------------------------------
 //  ETIQUETA gravada
@@ -115,7 +136,9 @@ spk_r_x = W - spk_l_x;
 spk_cy  = H/2;
 cen_x   = W/2;
 lcd_cy  = H/2 + lcd_offset_y;
-mem_cy  = lcd_cy - lcd_win_h/2 - slot_gap_from_lcd;
+lcd_win_h_eff = lcd_aa_h + 2*lcd_win_margin;   // altura efectiva da janela (area activa)
+lcd_win_w_eff = lcd_aa_w + 2*lcd_win_margin;   // largura efectiva da janela
+mem_cy  = lcd_cy - lcd_win_h_eff/2 - slot_gap_from_lcd;
 
 echo(str(">>> EXTERIOR: ", W, " x ", H, " x ", D, " mm"));
 
@@ -188,6 +211,42 @@ module speaker_pocket(cx, cy) {
             square([spk_short + 1, spk_long + 1], center=true);
 }
 
+// -- LCD: paredes de retencao com o contorno do modulo (registo) --
+//    centro do encaixe = centro da janela menos o offset da area activa
+function lcd_pkt_cx() = cen_x   - lcd_aa_off_x;
+function lcd_pkt_cy() = lcd_cy  - lcd_aa_off_y;
+
+module lcd_frame_add() {
+    fo_w = lcd_mod_w + 2*lcd_mod_clear + 2*lcd_frame_wall;
+    fo_h = lcd_mod_h + 2*lcd_mod_clear + 2*lcd_frame_wall;
+    fi_w = lcd_mod_w + 2*lcd_mod_clear;
+    fi_h = lcd_mod_h + 2*lcd_mod_clear;
+    translate([lcd_pkt_cx(), lcd_pkt_cy(), face_t])
+        linear_extrude(lcd_frame_h)
+            difference() {
+                rrect(fo_w, fo_h, lcd_frame_wall + 0.6);
+                rrect(fi_w, fi_h, 0.8);
+            }
+}
+
+// -- folga na parede de retencao p/ a flat-flex / conector sair --
+module lcd_fpc_cut() {
+    fi_w = lcd_mod_w + 2*lcd_mod_clear;
+    fi_h = lcd_mod_h + 2*lcd_mod_clear;
+    t = lcd_frame_wall * 3;
+    zc = face_t + lcd_frame_h/2 + 0.5;
+    zs = lcd_frame_h + 2;
+    cx = lcd_pkt_cx();  cy = lcd_pkt_cy();
+    if (lcd_fpc_side == 0)        // baixo (-Y)
+        translate([cx, cy - fi_h/2 - lcd_frame_wall/2, zc]) cube([lcd_fpc_w, t, zs], center=true);
+    else if (lcd_fpc_side == 1)   // cima (+Y)
+        translate([cx, cy + fi_h/2 + lcd_frame_wall/2, zc]) cube([lcd_fpc_w, t, zs], center=true);
+    else if (lcd_fpc_side == 2)   // esquerda (-X)
+        translate([cx - fi_w/2 - lcd_frame_wall/2, cy, zc]) cube([t, lcd_fpc_w, zs], center=true);
+    else                          // direita (+X)
+        translate([cx + fi_w/2 + lcd_frame_wall/2, cy, zc]) cube([t, lcd_fpc_w, zs], center=true);
+}
+
 // =====================================================================
 //  FACEPLATE (face exterior em z=0)
 // =====================================================================
@@ -198,12 +257,12 @@ module faceplate() {
             for (sx = [post_inset, W-post_inset])
                 for (sy = [post_inset, H-post_inset])
                     translate([sx, sy, face_t]) cylinder(h = interior_d-0.5, r = post_r);
+            lcd_frame_add();                       // paredes de retencao do LCD
         }
 
-        rect_cut_chamf(cen_x, lcd_cy, lcd_win_w, lcd_win_h, 1.2, open_chamf, face_t);
-        translate([cen_x, lcd_cy, face_t - lcd_pocket_depth])
-            linear_extrude(lcd_pocket_depth + 1)
-                rrect(lcd_pocket_w, lcd_pocket_h, 1.5);
+        // -- janela da area activa (passante, com boca chanfrada) --
+        rect_cut_chamf(cen_x, lcd_cy, lcd_win_w_eff, lcd_win_h_eff, 1.2, open_chamf, face_t);
+        lcd_fpc_cut();                             // folga p/ flat-flex / conector
 
         grille_slots_cut(spk_l_x, spk_cy);
         grille_slots_cut(spk_r_x, spk_cy);
@@ -212,12 +271,12 @@ module faceplate() {
 
         rect_cut_chamf(cen_x, mem_cy, cable_slot_w, cable_slot_h, cable_slot_r, open_chamf*0.6, face_t);
 
-        engrave_frame(cen_x, lcd_cy, lcd_win_w + 2*lcd_frame_gap, lcd_win_h + 2*lcd_frame_gap, 3);
+        engrave_frame(cen_x, lcd_cy, lcd_win_w_eff + 2*lcd_frame_gap, lcd_win_h_eff + 2*lcd_frame_gap, 3);
         engrave_frame(spk_l_x, spk_cy, spk_short + 2*grille_frame_gap, spk_long + 2*grille_frame_gap, 3);
         engrave_frame(spk_r_x, spk_cy, spk_short + 2*grille_frame_gap, spk_long + 2*grille_frame_gap, 3);
 
         if (label_text != "")
-            translate([cen_x, lcd_cy + lcd_win_h/2 + label_y_above_lcd, -eps])
+            translate([cen_x, lcd_cy + lcd_win_h_eff/2 + label_y_above_lcd, -eps])
                 linear_extrude(engrave_d + eps)
                     mirror([1,0,0])
                         text(label_text, size = label_size, font = label_font,
@@ -260,6 +319,10 @@ module body() {
 // =====================================================================
 if (part == "body") body();
 else if (part == "faceplate") faceplate();
+else if (part == "plate") {            // chapa de impressao: as 2 pecas lado a lado
+    body();                            // fundo no z=0 (abertura p/ cima)
+    translate([W + 12, 0, 0]) faceplate();  // face exterior no z=0 (postes p/ cima)
+}
 else if (part == "hero") {
     color([0.80,0.80,0.82]) body();
     translate([W, 0, floor_t + interior_d + 20 + face_t])

@@ -934,7 +934,7 @@ void setup() {
 #endif
 
   tft.init();
-  tft.setRotation(0);
+  tft.setRotation(2);
   tft.invertDisplay(false);
   tft.fillScreen(TFT_BLACK);
   cv.setColorDepth(16);
